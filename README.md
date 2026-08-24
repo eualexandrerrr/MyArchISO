@@ -21,21 +21,24 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 |:--|:--|
 | Checagem | Exige root, boot em UEFI e rede ativa |
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
-| Particionamento | GPT: ESP 1 GiB FAT32 + root no restante |
+| Particionamento | GPT: ESP 1 GiB FAT32 + root no restante (tipo da root pelo GUID da Discoverable Partition Spec) |
 | Sistema de arquivos | btrfs com `@` `@home` `@log` `@pkg` `@snapshots`, `zstd:3`, `noatime` |
 | Base | `pacstrap` com kernel, headers, firmware, microcode Intel e AMD |
 | Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
 | Usuário | Cria o usuário no `wheel` com shell `zsh`, sudo liberado |
-| Bootloader | `systemd-boot` com entrada normal e fallback |
+| Bootloader | `systemd-boot` com entrada normal e fallback, `systemd-boot-update.service` habilitado, entrada de NVRAM conferida |
+| Swap | Nenhuma partição: `zram-generator` com metade da RAM, teto de 8 GiB, `zstd` |
+| Snapshots | `snapper` no `@snapshots` + `snap-pac`: snapshot antes e depois de cada transação do `pacman` |
+| Cache | `paccache.timer` poda o `@pkg`, que fica fora do snapshot e cresceria pra sempre |
 | NVIDIA | Já grava `nvidia_drm.modeset=1` e `NVreg_PreserveVideoMemoryAllocations=1` |
 | Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
 
-## Uso
+## Instalação passo a passo
 
-### 1. Pendrive
+### 1. Preparar o pendrive
 
-O pendrive é montado com [Ventoy](https://ventoy.net), que boota ISO como arquivo —
-dá pra ter Arch e Windows no mesmo pendrive e trocar a ISO sem regravar nada.
+O pendrive é montado com [Ventoy](https://ventoy.net), que boota ISO como arquivo — dá pra
+ter Arch e Windows no mesmo pendrive e trocar a ISO sem regravar nada.
 
 ```
 PENDRIVE/
@@ -46,13 +49,19 @@ PENDRIVE/
     └── README.md
 ```
 
-### 2. Boot
+Baixe a ISO em [archlinux.org/download](https://archlinux.org/download/) e copie pra raiz do
+pendrive. O Ventoy acha sozinho.
 
-Desative o **Secure Boot** na BIOS, boote o pendrive e escolha a ISO do Arch no menu do Ventoy.
+### 2. BIOS
 
-### 3. Rede
+Duas coisas, só:
 
-Cabo já funciona sozinho. No wifi:
+- **UEFI ligado.** O script recusa bootar em BIOS legada, e recusa cedo, antes de tocar no disco.
+- **Secure Boot desligado.** O `nvidia-open-dkms` não vem assinado.
+
+### 3. Bootar e conectar
+
+Escolha a ISO do Arch no menu do Ventoy. Cabo de rede já funciona sozinho. No wifi:
 
 ```bash
 iwctl
@@ -63,40 +72,100 @@ iwctl
 [iwd]# exit
 ```
 
-### 4. Instalar
+Confira antes de seguir — sem rede o script para logo no começo:
+
+```bash
+ping -c1 archlinux.org
+```
+
+### 4. Rodar o instalador
+
+Direto do pendrive, sem baixar nada:
 
 ```bash
 loadkeys br-abnt2
-pacman -Sy git --noconfirm
-git clone https://github.com/eualexandrerrr/myarch
-cd myarch
-./install.sh
-```
-
-Ou direto do pendrive do Ventoy, sem precisar de internet pra baixar o script:
-
-```bash
 mkdir -p /mnt/usb && mount /dev/disk/by-label/Ventoy /mnt/usb
-cd /mnt/usb/myarch && ./install.sh
+bash /mnt/usb/myarch/install.sh
 ```
 
-O script pergunta o disco de destino e **exige que você digite o caminho completo** pra
-confirmar. Depois pergunta hostname, usuário e senhas. Fora isso, roda sozinho.
-
-Para pular a pergunta do disco:
+Ou clonando, se preferir a versão mais nova:
 
 ```bash
-DISK=/dev/nvme0n1 ./install.sh
+loadkeys br-abnt2
+pacman -Sy --noconfirm git
+git clone https://github.com/eualexandrerrr/myarch
+bash myarch/install.sh
 ```
 
-### 5. Depois do reboot
+### 5. O que ele vai perguntar
+
+Ele lista os discos e pede o alvo. **Confira com calma:** o disco escolhido é apagado por
+inteiro, e pra confirmar você tem que digitar o caminho completo, não `s` nem `y`.
+
+```
+Disco de destino (ex: /dev/nvme0n1): /dev/nvme0n1
+Digite exatamente o caminho do disco para confirmar (/dev/nvme0n1): /dev/nvme0n1
+Hostname [ryzen]:
+Usuario [alexandre]:
+Senha de alexandre:
+Senha do root:
+```
+
+Pra pular a primeira pergunta:
+
+```bash
+DISK=/dev/nvme0n1 bash install.sh
+```
+
+Daí em diante roda sozinho. O grosso do tempo é o `pacstrap` baixando cerca de 900 MB.
+
+### 6. Depois do reboot
+
+Tire o pendrive e logue como o usuário que você criou. O instalador já deixou os dotfiles
+clonados e um `PROXIMOS-PASSOS.txt` no home:
 
 ```bash
 cd ~/.dotfiles
 ./install.sh
 ```
 
-Aí sim entram Hyprland, Quickshell, `nvidia-open-dkms` e o rice inteiro.
+É essa segunda etapa que instala Hyprland, Quickshell, o driver `nvidia-open-dkms`, o
+`claude-code` e o rice inteiro. Reinicie de novo no fim.
+
+## Se algo der errado
+
+| O que aparece | O que é | O que fazer |
+|:--|:--|:--|
+| `o sistema nao bootou em UEFI` | Ainda em BIOS legada | Ligar UEFI no setup da placa |
+| `sem internet` | Sem rede no live ISO | Conectar com `iwctl`, ou usar cabo |
+| `nao e um dispositivo de bloco` | Caminho do disco errado | Conferir com `lsblk` |
+| `confirmacao nao bateu` | Você digitou diferente | Nada foi tocado no disco. Rodar de novo |
+| `AVISO: nao registrei a entrada de boot na NVRAM` | A firmware recusou gravar | O sistema ainda boota, pelo caminho removível do ESP. Dá pra criar depois com `efibootmgr` |
+
+O script só apaga disco depois de todas as checagens e da confirmação digitada. Se ele morrer
+antes disso, seu disco está intacto.
+
+Se travar no meio da instalação, é seguro simplesmente rodar de novo: ele reparticiona do
+zero, não tenta aproveitar estado anterior.
+
+## Rollback
+
+O `snap-pac` tira um snapshot antes e outro depois de cada transação do `pacman`. Quando um
+update quebra o sistema:
+
+```bash
+snapper list                 # acha o número do snapshot bom
+sudo snapper rollback <N>    # marca o snapshot como novo padrão
+reboot
+```
+
+O `systemd-boot` **não** lista snapshots no menu de boot — isso é coisa de `grub-btrfs`, que
+só existe pro GRUB. Se o sistema nem chega a bootar, o caminho é o pendrive: bootar o live
+ISO, montar o subvolume `@snapshots` e fazer o rollback de lá.
+
+```bash
+mount -o subvol=@snapshots /dev/nvme0n1p2 /mnt
+```
 
 ## Padrões
 
@@ -118,10 +187,34 @@ SUBVOLUMES=(@ @home @log @pkg @snapshots)
   configuração é um arquivo de texto de 6 linhas.
 - **btrfs com subvolumes** — habilita snapshot antes de update. `@pkg` fora do snapshot pra
   não versionar cache de pacote, `@log` separado pra log não entrar em rollback.
-- **Sem criptografia por padrão** — desktop fixo. Para LUKS, o passo é entre `wipe_disk` e
-  `make_filesystems`.
+- **Sem criptografia** — desktop fixo, disco não sai da mesa. LUKS e Secure Boot ficam de
+  fora de propósito: o `nvidia-open-dkms` não vem assinado, então Secure Boot arrastaria
+  `sbctl` e UKI atrás.
+- **`snapper` com `TIMELINE_CREATE=no`** — quem dispara snapshot é o `snap-pac`, antes e depois
+  de cada transação do `pacman`. Snapshot de hora em hora num desktop só enche disco. O
+  `create-config` precisa de uma dança (desmontar `/.snapshots`, deixar ele criar o dele,
+  apagar, remontar o nosso) porque ele se recusa a trabalhar num subvolume que já existe.
+- **zram em vez de partição ou arquivo de swap** — swap em disco só serve pra hibernar, e
+  hibernar com a NVIDIA proprietária é fonte de dor. `vm.swappiness=180` é o valor certo pra
+  swap comprimida em RAM; o 60 padrão assume disco lento.
+- **ESP montada com `fmask=0077,dmask=0077`** — sem isso o `systemd` reclama que o arquivo de
+  random seed fica legível por qualquer usuário, e o `genfstab` carimba a montagem frouxa no
+  `fstab`.
+- **Sem `ssd` nem `space_cache=v2` nas opções de montagem** — os dois são autodetectados ou já
+  são padrão desde o btrfs-progs 5.15. Escrever à mão só envelhece o script.
 - **Microcode Intel e AMD juntos** — o pacote errado é ignorado no boot, e o mesmo pendrive
   serve pras duas máquinas.
+- **`mkinitcpio -P` antes de escrever as entradas do boot** — o preset do pacote `linux` nem
+  sempre traz o `fallback` ligado. Sem conferir, a entrada "Arch Linux (fallback)" apareceria
+  no menu apontando pra uma imagem que nunca foi gerada: só morde no dia em que você precisa
+  dela. O `fallback` é ligado no preset, não gerado à mão, pra que o hook do `pacman` a
+  regenere a cada update de kernel.
+- **Opção do `pacman.conf` ajustada por função, não por `sed` ancorado em `^#`** — o pacman
+  6.1 passou a entregar `ParallelDownloads` já ativo. Um `sed` que só casa a linha comentada
+  deixou de ajustar qualquer coisa, e falhava calado.
+- **Entrada de boot conferida depois do `bootctl install`** — quando a firmware recusa gravar
+  na NVRAM, o `bootctl` não reclama, e a máquina passa a depender do caminho removível do
+  ESP, que outro sistema operacional pode sobrescrever.
 
 ## Avisos
 

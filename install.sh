@@ -17,11 +17,13 @@ DOTFILES_REPO="https://github.com/eualexandrerrr/dotfiles"
 BASE_PACKAGES=(
     base base-devel linux linux-headers linux-firmware
     btrfs-progs dosfstools e2fsprogs
+    snapper snap-pac pacman-contrib
     networkmanager
     sudo git nano vim
     intel-ucode amd-ucode
     zsh
     efibootmgr
+    zram-generator
     reflector
     man-db man-pages
     openssh
@@ -33,6 +35,21 @@ log()  { printf '\n%s==>%s %s%s%s\n' "$BLU" "$END" "$BLD" "$*" "$END"; }
 ok()   { printf '%s  ok%s %s\n' "$GRN" "$END" "$*"; }
 warn() { printf '%s  !!%s %s\n' "$YEL" "$END" "$*"; }
 die()  { printf '\n%serro:%s %s\n' "$RED" "$END" "$*" >&2; exit 1; }
+
+# O pacman 6.1 passou a entregar ParallelDownloads ATIVO (valor 5) no
+# pacman.conf. Um `sed 's/^#ParallelDownloads.*/.../'` so casa quando a opcao
+# esta comentada, entao desde entao ele nao ajusta nada e falha calado. Isto aqui
+# cobre os tres casos: comentada, ativa com outro valor, e ausente.
+set_pacman_option() {
+    local key="$1" value="$2" file="${3:-/etc/pacman.conf}"
+    if grep -qE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=" "$file"; then
+        sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=.*|${key} = ${value}|" "$file"
+    elif grep -qE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*$" "$file"; then
+        sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*$|${key} = ${value}|" "$file"
+    else
+        sed -i "/^\[options\]/a ${key} = ${value}" "$file"
+    fi
+}
 
 banner() {
     printf '%s' "$BLU"
@@ -59,13 +76,30 @@ prepare_live() {
     log "preparando o ambiente live"
     loadkeys "$KEYMAP"
     timedatectl set-ntp true
-    pacman -Sy --noconfirm archlinux-keyring >/dev/null
+
+    # O live ISO monta o chaveiro em background, no pacman-init.service. Mexer no
+    # pacman antes disso terminar da "unknown trust" e derruba o script inteiro.
+    # Em oneshot ja rodando, o `start` espera terminar em vez de rodar de novo.
+    if systemctl cat pacman-init.service >/dev/null 2>&1; then
+        if systemctl start pacman-init.service >/dev/null 2>&1; then
+            ok "chaveiro do live ISO pronto"
+        else
+            warn "pacman-init.service reclamou, seguindo"
+        fi
+    fi
+
+    # --needed porque o ISO ja traz o chaveiro do dia em que foi gerado; isso so
+    # importa em ISO velha. Falhar aqui nao e motivo pra abortar a instalacao: o
+    # pacstrap -K monta um chaveiro proprio no destino de qualquer jeito.
+    if ! pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null 2>&1; then
+        warn "nao atualizei o archlinux-keyring, seguindo com o do ISO"
+    fi
     if command -v reflector >/dev/null 2>&1; then
         reflector --country Brazil,Chile,United\ States --age 12 --protocol https \
             --sort rate --save /etc/pacman.d/mirrorlist >/dev/null 2>&1 \
             && ok "mirrorlist otimizado" || warn "reflector falhou, seguindo com a lista padrao"
     fi
-    sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf
+    set_pacman_option ParallelDownloads 10
     ok "ambiente live pronto"
 }
 
@@ -141,8 +175,11 @@ wipe_disk() {
     sgdisk --zap-all "$DISK" >/dev/null
     partprobe "$DISK" 2>/dev/null || true
 
+    # ef00 = EFI System. A root usa o GUID da Discoverable Partition Specification
+    # (root-x86-64) em vez do generico 8300: com ele o systemd acha a raiz sozinho
+    # se o root= sumir da linha de comando do kernel.
     sgdisk -n 1:0:+"$ESP_SIZE" -t 1:ef00 -c 1:"EFI" "$DISK" >/dev/null
-    sgdisk -n 2:0:0           -t 2:8300 -c 2:"ROOT" "$DISK" >/dev/null
+    sgdisk -n 2:0:0 -t 2:4f68bce3-e8cd-4db1-96e7-fbcaf984b709 -c 2:"ROOT" "$DISK" >/dev/null
     partprobe "$DISK" 2>/dev/null || true
     sleep 2
     ok "GPT criado: ESP $ESP_SIZE + root no restante"
@@ -166,14 +203,14 @@ make_filesystems() {
 
 mount_filesystems() {
     log "montando"
-    local opts="noatime,compress=zstd:3,ssd,space_cache=v2"
+    local opts="noatime,compress=zstd:3"
     mount -o "$opts,subvol=@" "$ROOT" /mnt
     mkdir -p /mnt/{home,var/log,var/cache/pacman/pkg,.snapshots,boot}
     mount -o "$opts,subvol=@home"      "$ROOT" /mnt/home
     mount -o "$opts,subvol=@log"       "$ROOT" /mnt/var/log
     mount -o "$opts,subvol=@pkg"       "$ROOT" /mnt/var/cache/pacman/pkg
     mount -o "$opts,subvol=@snapshots" "$ROOT" /mnt/.snapshots
-    mount "$ESP" /mnt/boot
+    mount -o fmask=0077,dmask=0077 "$ESP" /mnt/boot
     ok "arvore montada em /mnt"
     findmnt -R /mnt -o TARGET,SOURCE,FSTYPE | head -10
 }
@@ -224,16 +261,103 @@ printf '%s:%s' "$USERNAME" "$USER_PASSWORD" | chpasswd
 printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
 chmod 440 /etc/sudoers.d/10-wheel
 
-sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' /etc/pacman.conf
-sed -i 's/^#Color/Color/' /etc/pacman.conf
+# Mesma armadilha do live ISO: o pacman 6.1 entrega ParallelDownloads ATIVO,
+# entao um sed ancorado em ^# nao casa e o ajuste some sem avisar. O chroot roda
+# como script separado, por isso a funcao vai duplicada aqui.
+set_pacman_option() {
+    local key="\$1" value="\$2" file=/etc/pacman.conf
+    if grep -qE "^[[:space:]]*#?[[:space:]]*\${key}[[:space:]]*=" "\$file"; then
+        sed -i -E "s|^[[:space:]]*#?[[:space:]]*\${key}[[:space:]]*=.*|\${key} = \${value}|" "\$file"
+    elif grep -qE "^[[:space:]]*#?[[:space:]]*\${key}[[:space:]]*\$" "\$file"; then
+        sed -i -E "s|^[[:space:]]*#?[[:space:]]*\${key}[[:space:]]*\$|\${key} = \${value}|" "\$file"
+    else
+        sed -i "/^\[options\]/a \${key} = \${value}" "\$file"
+    fi
+}
+
+set_pacman_option ParallelDownloads 10
+grep -qE '^[[:space:]]*Color[[:space:]]*$' /etc/pacman.conf || sed -i 's/^[[:space:]]*#[[:space:]]*Color[[:space:]]*$/Color/' /etc/pacman.conf
+grep -qE '^[[:space:]]*Color[[:space:]]*$' /etc/pacman.conf || sed -i '/^\[options\]/a Color' /etc/pacman.conf
 grep -qE '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
 pacman -Sy --noconfirm >/dev/null
 
 systemctl enable NetworkManager.service
 systemctl enable systemd-timesyncd.service
 systemctl enable fstrim.timer
+systemctl enable paccache.timer
+
+# Sem particao de swap: zram cobre o pico de memoria sem gastar disco.
+cat > /etc/systemd/zram-generator.conf <<ZRAM
+[zram0]
+zram-size = min(ram / 2, 8192)
+compression-algorithm = zstd
+ZRAM
+
+cat > /etc/sysctl.d/99-zram.conf <<SYSCTL
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+SYSCTL
+
+# Snapper no subvolume @snapshots. O create-config quer criar /.snapshots ele
+# mesmo e falha porque o subvolume ja existe montado, entao a ordem e:
+# desmontar, apagar, deixar o snapper criar o dele, apagar esse, e remontar o
+# nosso por cima. --no-dbus porque dentro do chroot nao ha barramento.
+umount /.snapshots
+rm -rf /.snapshots
+snapper --no-dbus -c root create-config /
+btrfs subvolume delete /.snapshots
+mkdir /.snapshots
+mount /.snapshots
+chmod 750 /.snapshots
+chown :"$USERNAME" /.snapshots
+
+# TIMELINE_CREATE=no porque quem dispara snapshot aqui e o snap-pac, antes e
+# depois de cada transacao do pacman. Snapshot por hora em desktop so enche disco.
+snapper --no-dbus -c root set-config     TIMELINE_CREATE=no     NUMBER_CLEANUP=yes     NUMBER_MIN_AGE=1800     NUMBER_LIMIT=15     NUMBER_LIMIT_IMPORTANT=8     ALLOW_USERS="$USERNAME"     SYNC_ACL=yes
+
+systemctl enable snapper-cleanup.timer
+
+# O preset do pacote linux nem sempre traz o 'fallback' ligado. Quando nao traz,
+# o mkinitcpio -P gera so o initramfs normal, e a entrada de recuperacao do
+# systemd-boot fica apontando pra uma imagem que nunca existiu: o menu mostra
+# "Arch Linux (fallback)" e escolher nao boota. Ligar no PRESET, e nao gerar a
+# imagem na mao, e o que mantem ela viva: o hook do pacman roda mkinitcpio -P a
+# cada update de kernel.
+PRESET=/etc/mkinitcpio.d/linux.preset
+if [ -f "\$PRESET" ]; then
+    sed -i "s|^#[[:space:]]*\(fallback_image=\)|\1|" "\$PRESET"
+    sed -i "s|^#[[:space:]]*\(fallback_options=\)|\1|" "\$PRESET"
+    grep -q "^fallback_image=" "\$PRESET" \
+        || printf 'fallback_image="/boot/initramfs-linux-fallback.img"\n' >> "\$PRESET"
+    grep -q "^fallback_options=" "\$PRESET" \
+        || printf 'fallback_options="-S autodetect"\n' >> "\$PRESET"
+    grep -qE "^PRESETS=.*fallback" "\$PRESET" \
+        || sed -i "s|^PRESETS=.*|PRESETS=('default' 'fallback')|" "\$PRESET"
+fi
+
+# Gerar as imagens ANTES de escrever as entradas: assim da pra so escrever a
+# entrada de fallback se a imagem dela realmente saiu.
+mkinitcpio -P
 
 bootctl install
+
+# O bootctl grava a entrada "Linux Boot Manager" na NVRAM, mas nem sempre
+# consegue: firmware que recusa escrita, efivarfs em somente-leitura, ou
+# execucao dentro de chroot. Quando falha ele NAO reclama, e a maquina passa a
+# depender do caminho removivel do ESP, que outro sistema operacional ou um
+# update de firmware pode sobrescrever. Conferir, e criar na mao se faltar.
+if efibootmgr 2>/dev/null | grep -qi 'Linux Boot Manager'; then
+    echo 'entrada de boot ja registrada na NVRAM'
+elif efibootmgr --create --disk "$DISK" --part 1 --unicode --loader '\EFI\systemd\systemd-bootx64.efi' --label 'Linux Boot Manager' >/dev/null 2>&1; then
+    echo 'entrada de boot criada na NVRAM pelo efibootmgr'
+else
+    echo 'AVISO: nao registrei a entrada de boot na NVRAM' >&2
+    echo 'AVISO: a maquina vai bootar pelo caminho removivel do ESP' >&2
+fi
+
+systemctl enable systemd-boot-update.service
 
 cat > /boot/loader/loader.conf <<LOADER
 default arch.conf
@@ -253,7 +377,8 @@ initrd  /initramfs-linux.img
 options root=UUID=\$ROOT_UUID rootflags=subvol=@ ${KERNEL_PARAMS[*]}
 ENTRY
 
-cat > /boot/loader/entries/arch-fallback.conf <<ENTRY
+if [ -f /boot/initramfs-linux-fallback.img ]; then
+    cat > /boot/loader/entries/arch-fallback.conf <<ENTRY
 title   Arch Linux (fallback)
 linux   /vmlinuz-linux
 initrd  /intel-ucode.img
@@ -261,8 +386,9 @@ initrd  /amd-ucode.img
 initrd  /initramfs-linux-fallback.img
 options root=UUID=\$ROOT_UUID rootflags=subvol=@ ${KERNEL_PARAMS[*]}
 ENTRY
-
-mkinitcpio -P
+else
+    printf 'AVISO: sem initramfs de fallback, a entrada de recuperacao nao foi criada\n' >&2
+fi
 CHROOT
 
     chmod +x "$script"
