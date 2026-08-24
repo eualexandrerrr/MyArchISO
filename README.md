@@ -33,6 +33,54 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 | NVIDIA | Já grava `nvidia_drm.modeset=1` e `NVreg_PreserveVideoMemoryAllocations=1` |
 | Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
 
+## Requisitos
+
+| Item | Exigência | Por quê |
+|:--|:--|:--|
+| Firmware | **UEFI**, com CSM/Legacy desligado | O script recusa bootar em BIOS legada. Ele checa `/sys/firmware/efi/efivars` antes de tocar em qualquer disco |
+| Secure Boot | **desligado** | A ISO do Arch não é assinada, e o `nvidia-open-dkms` também não |
+| Disco de destino | mínimo 20 GB, recomendado 64 GB+ | 1 GiB vai pra ESP, o resto é btrfs. Só o sistema base já ocupa ~3 GB, e o `@pkg` guarda cache de pacote |
+| Rede no live ISO | cabo ou wifi | O `pacstrap` baixa cerca de 900 MB |
+| Pendrive | [Ventoy](https://ventoy.net) + ISO do Arch | Qualquer pendrive de 4 GB serve |
+| Processador | x86-64 | Não há suporte a ARM aqui |
+
+O script instala microcode da Intel **e** da AMD. O errado é ignorado no boot, então o mesmo
+pendrive serve pras duas plataformas.
+
+## Antes de apagar o disco
+
+**O disco escolhido é apagado por inteiro.** Não existe modo "instalar ao lado": o script faz
+`wipefs` e `sgdisk --zap-all` no dispositivo, e reparticiona do zero. Não há redimensionamento,
+não há preservação de partição, não há dual boot no mesmo disco.
+
+Antes de bootar o pendrive:
+
+1. **Tire o que só existe naquele disco.** Repositório sem push, pasta que não está em backup,
+   chave de SSH, arquivo de configuração de aplicativo. Vale rodar `git status` em cada
+   projeto — trabalho não commitado não vai pro GitHub sozinho.
+2. **Se havia Windows com BitLocker, salve a chave de recuperação primeiro.** Desligar o
+   Secure Boot muda o que o TPM mede, e o Windows pode exigir os 48 dígitos no boot seguinte.
+   Isso importa mesmo se o plano é apagar o Windows: se algo der errado no meio, você quer
+   conseguir voltar. Pegue em `manage-bde -protectors -get C:` ou em
+   `account.microsoft.com/devices/recoverykey`.
+3. **Confira o backup no destino, não na origem.** Pasta sincronizada não é backup até o
+   arquivo estar do outro lado. Abra o serviço no navegador e veja os arquivos lá.
+4. **Anote qual disco é qual.** Em `lsblk`, confira modelo e tamanho. `/dev/nvme0n1` e
+   `/dev/nvme1n1` trocam de número entre boots com mais frequência do que se imagina.
+
+## BIOS: o que mexer
+
+| Opção | Valor | Consequência de errar |
+|:--|:--|:--|
+| Secure Boot | **Disabled** | A ISO nem aparece no menu de boot |
+| CSM / Legacy Boot | **Disabled** | O pendrive boota em modo legado e o script para no `preflight` |
+| Boot Mode | **UEFI only** | Mesmo caso acima |
+| Fast Boot | Desligar se o pendrive não aparecer | A firmware pula a inicialização do USB |
+| SATA Mode | **AHCI** (não RAID / Intel RST) | O Linux não enxerga o disco |
+
+Se a máquina tinha Windows e você vai manter algum outro sistema, desligue também o
+**Início Rápido** do Windows: ele hiberna o NTFS, e montar isso do Linux corrompe.
+
 ## Instalação passo a passo
 
 ### 1. Preparar o pendrive
@@ -219,7 +267,9 @@ SUBVOLUMES=(@ @home @log @pkg @snapshots)
 ## Avisos
 
 - O script **apaga o disco escolhido por inteiro**. Ele pede confirmação digitada, mas
-  confira o alvo com `lsblk` antes.
+  confira o alvo com `lsblk` antes. Não existe modo de instalar ao lado de outro sistema
+  no mesmo disco: para dual boot, use um disco separado para cada sistema, e escolha
+  qual bootar pelo menu da placa.
 - Exige boot em UEFI. BIOS legada não é suportada.
 - Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
 
