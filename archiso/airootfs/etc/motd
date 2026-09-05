@@ -1,0 +1,5 @@
+Pendrive do [1mmyarch[0m: Arch Linux + instalador do Alexandre.
+Teclado ja esta em br-abnt2. Wi-Fi: [35miwctl[0m (cabo de rede funciona sozinho).
+
+Digite [35mmyarch-menu[0m para voltar ao menu, ou [35mbash /root/myarch/install.sh[0m
+para rodar o instalador direto. O README completo esta em /root/myarch/README.md.

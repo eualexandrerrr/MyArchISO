@@ -98,7 +98,9 @@ PENDRIVE/
 ```
 
 Baixe a ISO em [archlinux.org/download](https://archlinux.org/download/) e copie pra raiz do
-pendrive. O Ventoy acha sozinho.
+pendrive. O Ventoy acha sozinho. Ou use a [ISO própria](#iso-própria) deste repo, que já vem
+com o instalador dentro e o teclado certo; nesse caso os passos 3 e 4 se resumem a escolher
+`1` no menu.
 
 ### 2. BIOS
 
@@ -272,6 +274,35 @@ SUBVOLUMES=(@ @home @log @pkg @snapshots)
   qual bootar pelo menu da placa.
 - Exige boot em UEFI. BIOS legada não é suportada.
 - Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
+
+## ISO própria
+
+A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archlinux/archiso)
+(cópia do `releng`, o mesmo que gera a ISO oficial) com o que muda pra esta máquina:
+
+- teclado `br-abnt2` e `pt_BR.UTF-8` já no live, sem `loadkeys`;
+- `install.sh` e este README embutidos em `/root/myarch/`, então não precisa montar o Ventoy
+  nem ter internet pra achar o instalador;
+- menu no tty1 depois do autologin (`myarch-menu`): instalar, Wi-Fi, baixar o instalador mais
+  novo, shell, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
+- extras no live: `git`, `7zip`, `ntfs-3g`, `htop`, `python`, `wget`, `bash-completion`.
+
+Gerar exige Arch com root e o pacote `archiso`; o jeito sem máquina Linux é o workflow
+**build-iso** (Actions → build-iso → Run workflow), que roda num container `archlinux`,
+leva uns 15 minutos e publica `myarch-<data>-x86_64.iso` mais o `.sha256` numa release
+`iso-<data>`. Localmente:
+
+```bash
+sudo pacman -S archiso
+sudo ./archiso/build.sh        # ISO em archiso/out/
+```
+
+O `build.sh` copia o `install.sh` da raiz pra dentro do perfil na hora do build (a cópia está
+no `.gitignore`), então a ISO sempre carrega a versão do commit em que foi gerada. Os symlinks
+do `airootfs` estão no git como symlink de verdade: não edite essa pasta pelo Windows sem
+`core.symlinks=true`, senão eles viram arquivo de texto e o live quebra em silêncio.
+
+Grava do mesmo jeito: copiar o `.iso` pro pendrive do Ventoy.
 
 ## Repositórios relacionados
 

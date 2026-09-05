@@ -1,0 +1,66 @@
+# Gera a ISO do myarch (perfil archiso/ deste repo) num container Arch e publica como release.
+# Disparo manual. O install.sh e o README do commit vao embutidos no live em /root/myarch/.
+name: build-iso
+
+on:
+  workflow_dispatch:
+    inputs:
+      publicar:
+        description: "criar release com a ISO (false = so artifact do run)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-iso
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: archlinux:latest
+      # mkarchiso faz pacstrap em chroot e monta /proc, /sys e /dev dentro dele
+      options: --privileged
+    steps:
+      - name: Ferramentas
+        run: |
+          pacman -Sy --needed --noconfirm archlinux-keyring
+          pacman -Syu --needed --noconfirm archiso git github-cli
+          df -h / /tmp
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash archiso/build.sh -o "$GITHUB_WORKSPACE/out" -w /tmp/work
+          echo "ISO=$(ls out/myarch-*.iso)" >> "$GITHUB_ENV"
+          echo "TAG=iso-$(date -u +%Y.%m.%d)" >> "$GITHUB_ENV"
+
+      - name: Artifact do run
+        if: ${{ !inputs.publicar }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: myarch-iso
+          path: out/
+          retention-days: 7
+
+      - name: Release
+        if: ${{ inputs.publicar }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ISO ${{ env.TAG }}
+          body: |
+            ISO do myarch gerada do commit ${{ github.sha }}.
+
+            Grave com Ventoy (copiar o `.iso` pro pendrive) ou `dd`. Boota em UEFI, teclado já em br-abnt2,
+            menu com o instalador em `/root/myarch/install.sh`. Confira o `.sha256` antes de gravar.
+          files: |
+            out/myarch-*.iso
+            out/myarch-*.iso.sha256
