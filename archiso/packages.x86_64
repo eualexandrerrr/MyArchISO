@@ -46,5 +46,5 @@ pciutils
 usbutils
 nvme-cli
 smartmontools
-kitty-terminfo
+ghostty-terminfo
 qemu-guest-agent
