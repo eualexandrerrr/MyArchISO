@@ -104,8 +104,8 @@ prepare_live() {
     set_pacman_option ParallelDownloads 10
     if command -v reflector >/dev/null 2>&1; then
         log "ranqueando mirrors do Brasil, pode levar um minuto"
-        reflector --country Brazil --age 12 --protocol https --fastest 10 \
-            --save /etc/pacman.d/mirrorlist >/dev/null 2>&1 \
+        reflector --verbose --country Brazil --age 12 --protocol https --fastest 10 \
+            --save /etc/pacman.d/mirrorlist \
             && ok "mirrorlist otimizado" || warn "reflector falhou, seguindo com a lista padrao"
     fi
     log "atualizando o archlinux-keyring"
@@ -280,9 +280,9 @@ wipe_disk() {
 
 make_filesystems() {
     log "formatando"
-    mkfs.fat -F32 -n EFI "$ESP" >/dev/null
+    mkfs.fat -F32 -n EFI "$ESP"
     # ext4 por decisao do dono (05/09/2026): menos overhead que btrfs, sem snapshot.
-    mkfs.ext4 -F -q -L ROOT "$ROOT"
+    mkfs.ext4 -F -L ROOT "$ROOT"
     ok "ESP em FAT32, root em ext4"
 }
 
@@ -309,7 +309,9 @@ configure_system() {
     cat > "$script" <<CHROOT
 #!/usr/bin/env bash
 set -euo pipefail
+passo() { printf '\n\033[1;34m==>\033[0m %s\n' "\$1"; }
 
+passo "fuso, locale, hostname e teclado"
 ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
 hwclock --systohc
 
@@ -366,8 +368,10 @@ set_pacman_option ParallelDownloads 10
 grep -qE '^[[:space:]]*Color[[:space:]]*$' /etc/pacman.conf || sed -i 's/^[[:space:]]*#[[:space:]]*Color[[:space:]]*$/Color/' /etc/pacman.conf
 grep -qE '^[[:space:]]*Color[[:space:]]*$' /etc/pacman.conf || sed -i '/^\[options\]/a Color' /etc/pacman.conf
 grep -qE '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-pacman -Sy --noconfirm >/dev/null
+passo "sincronizando os repositorios do sistema instalado"
+pacman -Sy --noconfirm
 
+passo "habilitando servicos"
 systemctl enable NetworkManager.service
 systemctl enable systemd-timesyncd.service
 systemctl enable fstrim.timer
@@ -439,8 +443,10 @@ fi
 
 # Gerar as imagens ANTES de escrever as entradas: assim da pra so escrever a
 # entrada de fallback se a imagem dela realmente saiu.
+passo "gerando as imagens do kernel (mkinitcpio)"
 mkinitcpio -P
 
+passo "instalando o systemd-boot"
 bootctl install
 
 # O bootctl grava a entrada "Linux Boot Manager" na NVRAM, mas nem sempre
