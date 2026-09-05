@@ -285,7 +285,10 @@ A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archli
   nem ter internet pra achar o instalador;
 - menu no tty1 depois do autologin (`myarch-menu`): instalar, Wi-Fi, baixar o instalador mais
   novo, shell, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
-- extras no live: `git`, `7zip`, `ntfs-3g`, `htop`, `python`, `wget`, `bash-completion`.
+- lista de pacotes enxuta (`archiso/packages.x86_64`, 40 pacotes): kernel, firmware, boot, rede
+  (cabo e Wi-Fi), o que o `install.sh` chama e socorro básico (`ntfs-3g`, `exfatprogs`, `rsync`,
+  `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: PXE, clonezilla, VPN,
+  modem, leitor de tela, guest tools de VirtualBox/VMware/Hyper-V, cloud-init, smartcard.
 
 Gerar exige Arch com root e o pacote `archiso`; o jeito sem máquina Linux é o workflow
 **build-iso** (Actions → build-iso → Run workflow), que roda num container `archlinux`,
