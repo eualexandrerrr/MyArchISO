@@ -101,15 +101,17 @@ prepare_live() {
     # --needed porque o ISO ja traz o chaveiro do dia em que foi gerado; isso so
     # importa em ISO velha. Falhar aqui nao e motivo pra abortar a instalacao: o
     # pacstrap -K monta um chaveiro proprio no destino de qualquer jeito.
-    if ! pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null 2>&1; then
-        warn "nao atualizei o archlinux-keyring, seguindo com o do ISO"
-    fi
+    set_pacman_option ParallelDownloads 10
     if command -v reflector >/dev/null 2>&1; then
-        reflector --country Brazil,Chile,United\ States --age 12 --protocol https \
-            --sort rate --save /etc/pacman.d/mirrorlist >/dev/null 2>&1 \
+        log "ranqueando mirrors do Brasil, pode levar um minuto"
+        reflector --country Brazil --age 12 --protocol https --fastest 10 \
+            --save /etc/pacman.d/mirrorlist >/dev/null 2>&1 \
             && ok "mirrorlist otimizado" || warn "reflector falhou, seguindo com a lista padrao"
     fi
-    set_pacman_option ParallelDownloads 10
+    log "atualizando o archlinux-keyring"
+    if ! pacman -Sy --noconfirm --needed archlinux-keyring; then
+        warn "nao atualizei o archlinux-keyring, seguindo com o do ISO"
+    fi
     ok "ambiente live pronto"
 }
 
@@ -175,7 +177,11 @@ pick_disk() {
         DISK="$(auto_disk)"
         ok "disco escolhido sozinho: $DISK (maior disco interno)"
     else
-        read -rp "Disco de destino (ex: /dev/nvme0n1): " DISK
+        while read -r -t 0 _; do read -r _; done
+        DISK=""
+        while [[ -z $DISK ]]; do
+            read -rp "Disco de destino (ex: /dev/nvme0n1): " DISK
+        done
         [[ -b $DISK ]] || die "$DISK nao e um dispositivo de bloco"
     fi
 
