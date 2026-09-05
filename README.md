@@ -340,6 +340,11 @@ do `airootfs` estão no git como symlink de verdade: não edite essa pasta pelo 
 
 Grava do mesmo jeito: copiar o `.iso` pro pendrive do Ventoy.
 
+Pra testar antes de gravar, `archiso/test-qemu.ps1` sobe a ISO num QEMU do Windows (TCG, sem
+Hyper-V) com um disco virtio de 30 GB e um disco pequeno rotulado `Ventoy` fazendo o papel do
+pendrive com `myarch/myarch.conf`; monitor em `127.0.0.1:4445` pra mandar teclas e capturar a
+tela. Foi assim que o modo automático foi validado de ponta a ponta antes de formatar.
+
 ## Repositórios relacionados
 
 - [eualexandrerrr/dotfiles](https://github.com/eualexandrerrr/dotfiles) — o rice que roda em cima desta base
