@@ -127,7 +127,8 @@ load_conf() {
     if [[ -f "$mnt/$CONF_FILE" ]]; then
         log "lendo $CONF_FILE do pendrive $CONF_LABEL"
         for key in HOSTNAME USERNAME PASSWORD_HASH DISK; do
-            val="$(grep -E "^${key}=" "$mnt/$CONF_FILE" | tail -1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"]\$//" | tr -d '\r')"
+            # || true: chave ausente faz o grep sair com 1 e, com set -e + pipefail, derrubaria o script
+            val="$(grep -E "^${key}=" "$mnt/$CONF_FILE" | tail -1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"]\$//" | tr -d '\r' || true)"
             [[ -n $val ]] || continue
             case "$key" in
                 HOSTNAME) HOSTNAME_DEFAULT="$val" ;;
