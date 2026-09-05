@@ -20,15 +20,14 @@ LOCALE="pt_BR.UTF-8"
 KEYMAP="br-abnt2"
 X11_KEYMAP="br"
 ESP_SIZE="1GiB"
-FILESYSTEM="btrfs"
-SUBVOLUMES=(@ @home @log @pkg @snapshots)
+FILESYSTEM="ext4"
 KERNEL_PARAMS=(nvidia_drm.modeset=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 rw quiet)
 DOTFILES_REPO="https://github.com/eualexandrerrr/dotfiles"
 
 BASE_PACKAGES=(
     base base-devel linux linux-headers linux-firmware
-    btrfs-progs dosfstools e2fsprogs
-    snapper snap-pac pacman-contrib
+    dosfstools e2fsprogs
+    pacman-contrib
     networkmanager
     sudo git nano vim
     intel-ucode amd-ucode
@@ -276,31 +275,18 @@ wipe_disk() {
 make_filesystems() {
     log "formatando"
     mkfs.fat -F32 -n EFI "$ESP" >/dev/null
-    mkfs.btrfs -f -L ROOT "$ROOT" >/dev/null
-    ok "ESP em FAT32, root em btrfs"
-
-    log "criando subvolumes"
-    mount "$ROOT" /mnt
-    local sv
-    for sv in "${SUBVOLUMES[@]}"; do
-        btrfs subvolume create "/mnt/$sv" >/dev/null
-        ok "subvolume $sv"
-    done
-    umount /mnt
+    # ext4 por decisao do dono (05/09/2026): menos overhead que btrfs, sem snapshot.
+    mkfs.ext4 -F -q -L ROOT "$ROOT"
+    ok "ESP em FAT32, root em ext4"
 }
 
 mount_filesystems() {
     log "montando"
-    local opts="noatime,compress=zstd:3"
-    mount -o "$opts,subvol=@" "$ROOT" /mnt
-    mkdir -p /mnt/{home,var/log,var/cache/pacman/pkg,.snapshots,boot}
-    mount -o "$opts,subvol=@home"      "$ROOT" /mnt/home
-    mount -o "$opts,subvol=@log"       "$ROOT" /mnt/var/log
-    mount -o "$opts,subvol=@pkg"       "$ROOT" /mnt/var/cache/pacman/pkg
-    mount -o "$opts,subvol=@snapshots" "$ROOT" /mnt/.snapshots
+    mount -o noatime "$ROOT" /mnt
+    mkdir -p /mnt/boot
     mount -o fmask=0077,dmask=0077 "$ESP" /mnt/boot
     ok "arvore montada em /mnt"
-    findmnt -R /mnt -o TARGET,SOURCE,FSTYPE | head -10
+    findmnt -R /mnt -o TARGET,SOURCE,FSTYPE
 }
 
 install_base() {
@@ -395,25 +381,6 @@ vm.watermark_scale_factor = 125
 vm.page-cluster = 0
 SYSCTL
 
-# Snapper no subvolume @snapshots. O create-config quer criar /.snapshots ele
-# mesmo e falha porque o subvolume ja existe montado, entao a ordem e:
-# desmontar, apagar, deixar o snapper criar o dele, apagar esse, e remontar o
-# nosso por cima. --no-dbus porque dentro do chroot nao ha barramento.
-umount /.snapshots
-rm -rf /.snapshots
-snapper --no-dbus -c root create-config /
-btrfs subvolume delete /.snapshots
-mkdir /.snapshots
-mount /.snapshots
-chmod 750 /.snapshots
-chown :"$USERNAME" /.snapshots
-
-# TIMELINE_CREATE=no porque quem dispara snapshot aqui e o snap-pac, antes e
-# depois de cada transacao do pacman. Snapshot por hora em desktop so enche disco.
-snapper --no-dbus -c root set-config     TIMELINE_CREATE=no     NUMBER_CLEANUP=yes     NUMBER_MIN_AGE=1800     NUMBER_LIMIT=15     NUMBER_LIMIT_IMPORTANT=8     ALLOW_USERS="$USERNAME"     SYNC_ACL=yes
-
-systemctl enable snapper-cleanup.timer
-
 # O preset do pacote linux nem sempre traz o 'fallback' ligado. Quando nao traz,
 # o mkinitcpio -P gera so o initramfs normal, e a entrada de recuperacao do
 # systemd-boot fica apontando pra uma imagem que nunca existiu: o menu mostra
@@ -469,7 +436,7 @@ linux   /vmlinuz-linux
 initrd  /intel-ucode.img
 initrd  /amd-ucode.img
 initrd  /initramfs-linux.img
-options root=UUID=\$ROOT_UUID rootflags=subvol=@ ${KERNEL_PARAMS[*]}
+options root=UUID=\$ROOT_UUID ${KERNEL_PARAMS[*]}
 ENTRY
 
 if [ -f /boot/initramfs-linux-fallback.img ]; then
@@ -479,7 +446,7 @@ linux   /vmlinuz-linux
 initrd  /intel-ucode.img
 initrd  /amd-ucode.img
 initrd  /initramfs-linux-fallback.img
-options root=UUID=\$ROOT_UUID rootflags=subvol=@ ${KERNEL_PARAMS[*]}
+options root=UUID=\$ROOT_UUID ${KERNEL_PARAMS[*]}
 ENTRY
 else
     printf 'AVISO: sem initramfs de fallback, a entrada de recuperacao nao foi criada\n' >&2
@@ -580,7 +547,7 @@ finish() {
   Arch instalado em $DISK
   Hostname: $HOSTNAME   Usuario: $USERNAME
   Bootloader: systemd-boot
-  Layout: btrfs com subvolumes ${SUBVOLUMES[*]}
+  Layout: ESP FAT32 + root ext4, sem swap em disco (zram)
 
   Reinicie e tire o pendrive.
 $( if [[ $AUTO == 1 ]]; then

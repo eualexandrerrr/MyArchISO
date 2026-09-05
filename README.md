@@ -4,12 +4,12 @@
 
 **Instalador do Arch Linux**
 
-Instala uma base limpa em UEFI + systemd-boot + btrfs com subvolumes, e já deixa
+Instala uma base limpa em UEFI + systemd-boot + ext4, e já deixa
 os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro boot.
 
 [![Arch](https://img.shields.io/badge/Arch_Linux-1793D1?style=flat-square&logo=arch-linux&logoColor=white)](https://archlinux.org)
 [![systemd-boot](https://img.shields.io/badge/systemd--boot-FF6600?style=flat-square&logo=linux&logoColor=white)](https://wiki.archlinux.org/title/Systemd-boot)
-[![btrfs](https://img.shields.io/badge/btrfs-0A9BDC?style=flat-square&logo=linux&logoColor=white)](https://wiki.archlinux.org/title/Btrfs)
+[![ext4](https://img.shields.io/badge/ext4-0A9BDC?style=flat-square&logo=linux&logoColor=white)](https://wiki.archlinux.org/title/Ext4)
 
 </div>
 
@@ -22,14 +22,13 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 | Checagem | Exige root, boot em UEFI e rede ativa |
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
 | Particionamento | GPT: ESP 1 GiB FAT32 + root no restante (tipo da root pelo GUID da Discoverable Partition Spec) |
-| Sistema de arquivos | btrfs com `@` `@home` `@log` `@pkg` `@snapshots`, `zstd:3`, `noatime` |
+| Sistema de arquivos | ext4 com `noatime` (btrfs saiu em 09/2026, ver Decisões) |
 | Base | `pacstrap` com kernel, headers, firmware, microcode Intel e AMD |
 | Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
 | Usuário | Cria o usuário no `wheel` com shell `zsh`, sudo liberado |
 | Bootloader | `systemd-boot` com entrada normal e fallback, `systemd-boot-update.service` habilitado, entrada de NVRAM conferida |
 | Swap | Nenhuma partição: `zram-generator` com metade da RAM, teto de 8 GiB, `zstd` |
-| Snapshots | `snapper` no `@snapshots` + `snap-pac`: snapshot antes e depois de cada transação do `pacman` |
-| Cache | `paccache.timer` poda o `@pkg`, que fica fora do snapshot e cresceria pra sempre |
+| Cache | `paccache.timer` poda o cache do `pacman` |
 | NVIDIA | Já grava `nvidia_drm.modeset=1` e `NVreg_PreserveVideoMemoryAllocations=1` |
 | Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
 
@@ -39,7 +38,7 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 |:--|:--|:--|
 | Firmware | **UEFI**, com CSM/Legacy desligado | O script recusa bootar em BIOS legada. Ele checa `/sys/firmware/efi/efivars` antes de tocar em qualquer disco |
 | Secure Boot | **desligado** | A ISO do Arch não é assinada, e o `nvidia-open-dkms` também não |
-| Disco de destino | mínimo 20 GB, recomendado 64 GB+ | 1 GiB vai pra ESP, o resto é btrfs. Só o sistema base já ocupa ~3 GB, e o `@pkg` guarda cache de pacote |
+| Disco de destino | mínimo 20 GB, recomendado 64 GB+ | 1 GiB vai pra ESP, o resto é ext4. Só o sistema base já ocupa ~3 GB, e o `@pkg` guarda cache de pacote |
 | Rede no live ISO | cabo | O `pacstrap` baixa cerca de 900 MB. A ISO própria não traz Wi-Fi |
 | Pendrive | [Ventoy](https://ventoy.net) + ISO do Arch | Qualquer pendrive de 4 GB serve |
 | Processador | x86-64 | Não há suporte a ARM aqui |
@@ -230,23 +229,13 @@ antes disso, seu disco está intacto.
 Se travar no meio da instalação, é seguro simplesmente rodar de novo: ele reparticiona do
 zero, não tenta aproveitar estado anterior.
 
-## Rollback
+## Se um update quebrar
 
-O `snap-pac` tira um snapshot antes e outro depois de cada transação do `pacman`. Quando um
-update quebra o sistema:
-
-```bash
-snapper list                 # acha o número do snapshot bom
-sudo snapper rollback <N>    # marca o snapshot como novo padrão
-reboot
-```
-
-O `systemd-boot` **não** lista snapshots no menu de boot — isso é coisa de `grub-btrfs`, que
-só existe pro GRUB. Se o sistema nem chega a bootar, o caminho é o pendrive: bootar o live
-ISO, montar o subvolume `@snapshots` e fazer o rollback de lá.
+Sem snapshot: o caminho é o pendrive. Bootar o live, montar a root e arrumar de lá
+(`arch-chroot /mnt`, `pacman -U /var/cache/pacman/pkg/<pacote-anterior>`).
 
 ```bash
-mount -o subvol=@snapshots /dev/nvme0n1p2 /mnt
+mount /dev/nvme0n1p2 /mnt && mount /dev/nvme0n1p1 /mnt/boot && arch-chroot /mnt
 ```
 
 ## Padrões
@@ -260,30 +249,25 @@ TIMEZONE="America/Sao_Paulo"
 LOCALE="pt_BR.UTF-8"
 KEYMAP="br-abnt2"
 ESP_SIZE="1GiB"
-SUBVOLUMES=(@ @home @log @pkg @snapshots)
 ```
 
 ## Decisões
 
 - **systemd-boot em vez de GRUB** — em UEFI puro o GRUB é peso morto. Boot mais rápido e
   configuração é um arquivo de texto de 6 linhas.
-- **btrfs com subvolumes** — habilita snapshot antes de update. `@pkg` fora do snapshot pra
-  não versionar cache de pacote, `@log` separado pra log não entrar em rollback.
+- **ext4 em vez de btrfs** (09/2026) — decisão do dono, por desempenho: sem CoW, sem
+  compressão, sem checksum de dados, menos trabalho por escrita em jogo e compilação. O preço
+  é não ter snapshot nem rollback; a versão com btrfs + `snapper` + `snap-pac` fica no
+  histórico do git (`git log --before=2026-09-06`).
 - **Sem criptografia** — desktop fixo, disco não sai da mesa. LUKS e Secure Boot ficam de
   fora de propósito: o `nvidia-open-dkms` não vem assinado, então Secure Boot arrastaria
   `sbctl` e UKI atrás.
-- **`snapper` com `TIMELINE_CREATE=no`** — quem dispara snapshot é o `snap-pac`, antes e depois
-  de cada transação do `pacman`. Snapshot de hora em hora num desktop só enche disco. O
-  `create-config` precisa de uma dança (desmontar `/.snapshots`, deixar ele criar o dele,
-  apagar, remontar o nosso) porque ele se recusa a trabalhar num subvolume que já existe.
 - **zram em vez de partição ou arquivo de swap** — swap em disco só serve pra hibernar, e
   hibernar com a NVIDIA proprietária é fonte de dor. `vm.swappiness=180` é o valor certo pra
   swap comprimida em RAM; o 60 padrão assume disco lento.
 - **ESP montada com `fmask=0077,dmask=0077`** — sem isso o `systemd` reclama que o arquivo de
   random seed fica legível por qualquer usuário, e o `genfstab` carimba a montagem frouxa no
   `fstab`.
-- **Sem `ssd` nem `space_cache=v2` nas opções de montagem** — os dois são autodetectados ou já
-  são padrão desde o btrfs-progs 5.15. Escrever à mão só envelhece o script.
 - **Microcode Intel e AMD juntos** — o pacote errado é ignorado no boot, e o mesmo pendrive
   serve pras duas máquinas.
 - **`mkinitcpio -P` antes de escrever as entradas do boot** — o preset do pacote `linux` nem
