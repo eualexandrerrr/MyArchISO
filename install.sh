@@ -478,10 +478,11 @@ bootctl install
 # execucao dentro de chroot. Quando falha ele NAO reclama, e a maquina passa a
 # depender do caminho removivel do ESP, que outro sistema operacional ou um
 # update de firmware pode sobrescrever. Conferir, e criar na mao se faltar.
-if efibootmgr 2>/dev/null | grep -qi 'Linux Boot Manager'; then
-    echo 'entrada de boot ja registrada na NVRAM'
-elif efibootmgr --create --disk "$DISK" --part 1 --unicode --loader '\EFI\systemd\systemd-bootx64.efi' --label 'Linux Boot Manager' >/dev/null 2>&1; then
-    echo 'entrada de boot criada na NVRAM pelo efibootmgr'
+for VELHA in \$(efibootmgr 2>/dev/null | grep -i 'Linux Boot Manager' | sed -E 's/^Boot([0-9A-Fa-f]{4}).*/\\1/'); do
+    efibootmgr -b "\$VELHA" -B >/dev/null 2>&1 && echo "entrada antiga Boot\$VELHA (Linux Boot Manager) removida da NVRAM"
+done
+if efibootmgr --create --disk "$DISK" --part 1 --unicode --loader '\EFI\systemd\systemd-bootx64.efi' --label 'Linux Boot Manager' >/dev/null 2>&1; then
+    echo 'entrada de boot criada na NVRAM apontando pra ESP nova'
 else
     echo 'AVISO: nao registrei a entrada de boot na NVRAM' >&2
     echo 'AVISO: a maquina vai bootar pelo caminho removivel do ESP' >&2
