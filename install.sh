@@ -528,7 +528,7 @@ if ! ping -c1 -W2 archlinux.org >/dev/null 2>&1; then
     printf 'sem rede depois de 2 minutos; rode depois: cd ~/.dotfiles && ./install.sh\n'
     systemctl disable myarch-firstboot.service; exit 1
 fi
-if runuser -u "\$USERNAME" -- env HOME="/home/\$USERNAME" bash -lc 'cd ~/.dotfiles && { git pull -q --ff-only || true; } && ./install.sh'; then
+if runuser -u "\$USERNAME" -- env HOME="/home/\$USERNAME" bash -lc 'cd ~/.dotfiles && { git pull -q --ff-only || true; } && bash ./install.sh'; then
     printf '\n\033[1;32m==>\033[0m dotfiles instalados. Reiniciando em 5 s.\n'
     rm -f "/home/\$USERNAME/PROXIMOS-PASSOS.txt"
     systemctl disable myarch-firstboot.service
