@@ -487,6 +487,18 @@ else
     echo 'AVISO: a maquina vai bootar pelo caminho removivel do ESP' >&2
 fi
 
+LBM_NUM=\$(efibootmgr 2>/dev/null | grep -i 'Linux Boot Manager' | head -1 | sed -E 's/^Boot([0-9A-Fa-f]{4}).*/\\1/')
+if [[ -n \$LBM_NUM ]]; then
+    ORDEM_ATUAL=\$(efibootmgr 2>/dev/null | grep '^BootOrder:' | sed 's/BootOrder: //')
+    RESTO=\$(printf '%s' "\$ORDEM_ATUAL" | tr ',' '\n' | grep -vx "\$LBM_NUM" | paste -sd, -)
+    NOVA_ORDEM="\$LBM_NUM\${RESTO:+,\$RESTO}"
+    if efibootmgr -o "\$NOVA_ORDEM" >/dev/null 2>&1; then
+        echo "ordem de boot: Linux Boot Manager (Boot\$LBM_NUM) em primeiro (\$NOVA_ORDEM)"
+    else
+        echo 'AVISO: nao consegui alterar o BootOrder; ajuste na BIOS ou tire o pendrive antes de ligar' >&2
+    fi
+fi
+
 systemctl enable systemd-boot-update.service
 
 cat > /boot/loader/loader.conf <<LOADER
@@ -636,8 +648,14 @@ EOF
         printf '\n'
     fi
     if [[ $AUTO == 1 ]]; then
-        printf '%s  reiniciando em 10 segundos. Qualquer tecla cancela o reboot.%s\n' "$YEL" "$END"
-        read -rs -t 10 -n 1 _ || systemctl reboot
+        if (( ${#WARNS[@]} + ${#BASE_FALTANDO[@]} )); then
+            printf '%s  houve avisos: nao vou reiniciar sozinho. Leia acima, tire o pendrive e aperte Enter pra reiniciar.%s\n' "$YEL" "$END"
+            read -r _
+            systemctl reboot
+        else
+            printf '%s  tire o pendrive agora. Reiniciando em 15 segundos. Qualquer tecla cancela o reboot.%s\n' "$YEL" "$END"
+            read -rs -t 15 -n 1 _ || systemctl reboot
+        fi
     fi
 }
 
