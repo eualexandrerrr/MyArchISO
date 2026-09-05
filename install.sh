@@ -337,7 +337,7 @@ Section "InputClass"
 EndSection
 KB
 
-useradd -m -G wheel,audio,video,storage,input -s /bin/zsh "$USERNAME"
+useradd -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh "$USERNAME"
 if [ -n "\${PW_HASH:-}" ]; then
     # hash SHA-512 vindo do pendrive (openssl passwd -6); -e = ja criptografado
     printf 'root:%s\n' "\$PW_HASH" | chpasswd -e
