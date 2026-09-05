@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-HOSTNAME_DEFAULT="rrr"
+HOSTNAME_DEFAULT="RRR"
 USERNAME_DEFAULT="alexandre"
 
 # AUTO=1: nao pergunta nada. Disco = maior disco interno que nao e o pendrive;
@@ -147,8 +147,7 @@ live_disk() {
     src="$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)"
     [[ -n $src && $src != /dev/loop* ]] || return 0
     pk="$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)"
-    printf '%s
-' "${pk:+/dev/$pk}"
+    printf '%s\n' "${pk:+/dev/$pk}"
 }
 
 auto_disk() {
