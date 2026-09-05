@@ -409,8 +409,8 @@ Depois de reiniciar e logar como $USERNAME:
     cd ~/.dotfiles
     ./install.sh
 
-Isso instala o Hyprland, o Quickshell, o driver nvidia-open-dkms e aplica
-o rice inteiro. Reinicie de novo no fim.
+Isso instala o KDE Plasma, o driver nvidia-open-dkms, os pacotes e os
+symlinks. Reinicie de novo no fim.
 STEPS
     arch-chroot /mnt chown "$USERNAME:$USERNAME" "/home/$USERNAME/PROXIMOS-PASSOS.txt"
     ok "dotfiles clonados em /home/$USERNAME/.dotfiles"

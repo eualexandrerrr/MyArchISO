@@ -177,7 +177,7 @@ cd ~/.dotfiles
 ./install.sh
 ```
 
-É essa segunda etapa que instala Hyprland, Quickshell, o driver `nvidia-open-dkms`, o
+É essa segunda etapa que instala o KDE Plasma, o driver `nvidia-open-dkms`, o
 `claude-code` e o rice inteiro. Reinicie de novo no fim.
 
 ## Se algo der errado
