@@ -41,10 +41,23 @@ BASE_PACKAGES=(
 
 RED=$'\e[1;31m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; BLU=$'\e[1;34m'; BLD=$'\e[1m'; END=$'\e[0m'
 
-log()  { printf '\n%s==>%s %s%s%s\n' "$BLU" "$END" "$BLD" "$*" "$END"; }
+LOGFILE=/root/myarch-install.log
+T0=$SECONDS
+STEP=0
+TOTAL_STEPS=12
+WARNS=()
+BASE_FALTANDO=()
+
+elapsed() { local s=$((SECONDS - T0)); printf '%02d:%02d' $((s/60)) $((s%60)); }
+log()  { STEP=$((STEP+1)); printf '\n%s==>%s %s[%d/%d] %s%s %s(%s)%s\n' "$BLU" "$END" "$BLD" "$STEP" "$TOTAL_STEPS" "$*" "$END" "$YEL" "$(elapsed)" "$END"; }
+sub()  { printf '%s  --%s %s\n' "$BLU" "$END" "$*"; }
 ok()   { printf '%s  ok%s %s\n' "$GRN" "$END" "$*"; }
-warn() { printf '%s  !!%s %s\n' "$YEL" "$END" "$*"; }
-die()  { printf '\n%serro:%s %s\n' "$RED" "$END" "$*" >&2; exit 1; }
+warn() { printf '%s  !!%s %s\n' "$YEL" "$END" "$*"; WARNS+=("[etapa $STEP] $*"); }
+die()  { printf '\n%serro:%s %s\n' "$RED" "$END" "$*" >&2; printf '%sparou na etapa %d/%d apos %s. Log: %s%s\n' "$RED" "$STEP" "$TOTAL_STEPS" "$(elapsed)" "$LOGFILE" "$END" >&2; exit 1; }
+on_err() { local rc=$? line=$1 cmd=$2; [[ $rc -eq 0 ]] && return; printf '\n%serro na linha %d (saida %d):%s %s\n' "$RED" "$line" "$rc" "$END" "$cmd" >&2; printf '%setapa %d/%d, %s decorridos. Nada mais foi alterado a partir daqui. Log: %s%s\n' "$RED" "$STEP" "$TOTAL_STEPS" "$(elapsed)" "$LOGFILE" "$END" >&2; }
+trap 'on_err $LINENO "$BASH_COMMAND"' ERR
+
+exec > >(tee -a "$LOGFILE") 2>&1
 
 # O pacman 6.1 passou a entregar ParallelDownloads ATIVO (valor 5) no
 # pacman.conf. Um `sed 's/^#ParallelDownloads.*/.../'` so casa quando a opcao
@@ -103,12 +116,12 @@ prepare_live() {
     # pacstrap -K monta um chaveiro proprio no destino de qualquer jeito.
     set_pacman_option ParallelDownloads 10
     if command -v reflector >/dev/null 2>&1; then
-        log "ranqueando mirrors do Brasil, pode levar um minuto"
+        sub "ranqueando mirrors do Brasil, pode levar um minuto"
         reflector --verbose --country Brazil --age 12 --protocol https --fastest 10 \
             --save /etc/pacman.d/mirrorlist \
             && ok "mirrorlist otimizado" || warn "reflector falhou, seguindo com a lista padrao"
     fi
-    log "atualizando o archlinux-keyring"
+    sub "atualizando o archlinux-keyring"
     if ! pacman -Sy --noconfirm --needed archlinux-keyring; then
         warn "nao atualizei o archlinux-keyring, seguindo com o do ISO"
     fi
@@ -126,7 +139,7 @@ load_conf() {
     mnt="$(mktemp -d)"
     mount -o ro "$dev" "$mnt" 2>/dev/null || { rmdir "$mnt"; return 0; }
     if [[ -f "$mnt/$CONF_FILE" ]]; then
-        log "lendo $CONF_FILE do pendrive $CONF_LABEL"
+        sub "lendo $CONF_FILE do pendrive $CONF_LABEL"
         for key in HOSTNAME USERNAME PASSWORD_HASH DISK; do
             # || true: chave ausente faz o grep sair com 1 e, com set -e + pipefail, derrubaria o script
             val="$(grep -E "^${key}=" "$mnt/$CONF_FILE" | tail -1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"]\$//" | tr -d '\r' || true)"
@@ -297,9 +310,19 @@ mount_filesystems() {
 
 install_base() {
     log "instalando o sistema base"
+    printf '  %d pacotes pedidos: %s\n' "${#BASE_PACKAGES[@]}" "${BASE_PACKAGES[*]}"
+    local t=$SECONDS p total
     pacstrap -K /mnt "${BASE_PACKAGES[@]}"
+    total="$(arch-chroot /mnt pacman -Qq | wc -l)"
+    for p in "${BASE_PACKAGES[@]}"; do arch-chroot /mnt pacman -Qq "$p" >/dev/null 2>&1 || BASE_FALTANDO+=("$p"); done
+    ok "pacstrap terminou em $(( (SECONDS-t)/60 ))m$(( (SECONDS-t)%60 ))s: $total pacotes no sistema (com dependencias)"
+    if (( ${#BASE_FALTANDO[@]} )); then
+        warn "pacotes base que NAO entraram: ${BASE_FALTANDO[*]}"
+    else
+        ok "todos os ${#BASE_PACKAGES[@]} pacotes pedidos estao presentes"
+    fi
     genfstab -U /mnt >> /mnt/etc/fstab
-    ok "base instalada e fstab gerado"
+    ok "fstab gerado: $(grep -c '^UUID' /mnt/etc/fstab) entradas"
 }
 
 configure_system() {
@@ -309,7 +332,8 @@ configure_system() {
     cat > "$script" <<CHROOT
 #!/usr/bin/env bash
 set -euo pipefail
-passo() { printf '\n\033[1;34m==>\033[0m %s\n' "\$1"; }
+passo() { printf '\n\033[1;34m==>\033[0m [chroot] %s\n' "\$1"; }
+trap 'rc=\$?; [[ \$rc -eq 0 ]] || printf "\n\033[1;31merro dentro do chroot na linha %d (saida %d):\033[0m %s\n" "\$LINENO" "\$rc" "\$BASH_COMMAND" >&2' ERR
 
 passo "fuso, locale, hostname e teclado"
 ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
@@ -582,14 +606,19 @@ UNIT
 
 finish() {
     log "concluido"
+    mkdir -p /mnt/var/log && cp "$LOGFILE" /mnt/var/log/myarch-install.log 2>/dev/null && ok "log copiado pra /var/log/myarch-install.log no sistema instalado"
     umount -R /mnt 2>/dev/null || warn "algo continua montado em /mnt"
-    printf '\n%s' "$GRN"
+    local cor=$GRN
+    (( ${#WARNS[@]} + ${#BASE_FALTANDO[@]} )) && cor=$YEL
+    printf '\n%s' "$cor"
     cat <<EOF
 ================================================================
-  Arch instalado em $DISK
-  Hostname: $HOSTNAME   Usuario: $USERNAME
-  Bootloader: systemd-boot
-  Layout: ESP FAT32 + root ext4, sem swap em disco (zram)
+  Arch instalado em $DISK em $(elapsed)
+  Hostname: $HOSTNAME   Usuario: $USERNAME (exibido como ${USERNAME^})
+  Bootloader: systemd-boot   Kernel: linux-zen
+  Layout: ESP FAT32 ($ESP) + root ext4 ($ROOT), sem swap em disco (zram)
+  Pacotes base: ${#BASE_PACKAGES[@]} pedidos, ${#BASE_FALTANDO[@]} faltando
+  Avisos: ${#WARNS[@]}
 
   Reinicie e tire o pendrive.
 $( if [[ $AUTO == 1 ]]; then
@@ -600,6 +629,12 @@ $( if [[ $AUTO == 1 ]]; then
 ================================================================
 EOF
     printf '%s\n' "$END"
+    if (( ${#BASE_FALTANDO[@]} )); then printf '%s  pacotes base faltando:%s %s\n' "$RED" "$END" "${BASE_FALTANDO[*]}"; fi
+    if (( ${#WARNS[@]} )); then
+        printf '%s  avisos durante a instalacao:%s\n' "$YEL" "$END"
+        printf '   - %s\n' "${WARNS[@]}"
+        printf '\n'
+    fi
     if [[ $AUTO == 1 ]]; then
         printf '%s  reiniciando em 10 segundos. Qualquer tecla cancela o reboot.%s\n' "$YEL" "$END"
         read -rs -t 10 -n 1 _ || systemctl reboot
