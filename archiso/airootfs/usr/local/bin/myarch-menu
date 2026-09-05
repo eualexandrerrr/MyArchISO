@@ -22,7 +22,7 @@ BANNER
     if rede_ok; then printf '  rede: %sok%s\n' "$GRN" "$END"; else printf '  rede: %ssem internet%s (confira o cabo; o instalador precisa)\n' "$YEL" "$END"; fi
     if conf_ok; then printf '  pendrive Ventoy: %sachado%s (le myarch/myarch.conf se existir)\n' "$GRN" "$END"; else printf '  pendrive Ventoy: nao achado (a senha vai ser perguntada)\n'; fi
     printf '  teclado: br-abnt2   fuso: America/Sao_Paulo\n\n'
-    printf '  %s1%s) Instalar AUTOMATICO: maior disco interno, hostname rrr, usuario alexandre,\n' "$BLD" "$END"
+    printf '  %s1%s) Instalar AUTOMATICO: maior disco interno, hostname RRR, usuario alexandre,\n' "$BLD" "$END"
     printf '     senha do pendrive, dotfiles no primeiro boot. %sAPAGA o disco%s apos 10 s de aviso.\n' "$RED" "$END"
     printf '  %s2%s) Instalar perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
     printf '  %s3%s) Baixar a versao mais nova do instalador (git) e instalar automatico\n' "$BLD" "$END"

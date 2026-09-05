@@ -40,7 +40,7 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 | Firmware | **UEFI**, com CSM/Legacy desligado | O script recusa bootar em BIOS legada. Ele checa `/sys/firmware/efi/efivars` antes de tocar em qualquer disco |
 | Secure Boot | **desligado** | A ISO do Arch não é assinada, e o `nvidia-open-dkms` também não |
 | Disco de destino | mínimo 20 GB, recomendado 64 GB+ | 1 GiB vai pra ESP, o resto é btrfs. Só o sistema base já ocupa ~3 GB, e o `@pkg` guarda cache de pacote |
-| Rede no live ISO | cabo ou wifi | O `pacstrap` baixa cerca de 900 MB |
+| Rede no live ISO | cabo | O `pacstrap` baixa cerca de 900 MB. A ISO própria não traz Wi-Fi |
 | Pendrive | [Ventoy](https://ventoy.net) + ISO do Arch | Qualquer pendrive de 4 GB serve |
 | Processador | x86-64 | Não há suporte a ARM aqui |
 
@@ -155,7 +155,7 @@ inteiro, e pra confirmar você tem que digitar o caminho completo, não `s` nem 
 ```
 Disco de destino (ex: /dev/nvme0n1): /dev/nvme0n1
 Digite exatamente o caminho do disco para confirmar (/dev/nvme0n1): /dev/nvme0n1
-Hostname [ryzen]:
+Hostname [RRR]:
 Usuario [alexandre]:
 Senha de alexandre:
 Senha do root:
@@ -181,6 +181,38 @@ cd ~/.dotfiles
 
 É essa segunda etapa que instala o KDE Plasma, o driver `nvidia-open-dkms`, o
 `claude-code` e o rice inteiro. Reinicie de novo no fim.
+
+## Modo automático
+
+```bash
+AUTO=1 bash install.sh
+```
+
+Não pergunta nada. Serve pra reinstalar a mesma máquina sem digitar:
+
+| o quê | de onde vem |
+|:--|:--|
+| Disco | o maior disco interno (não removível, não USB), fora o que carrega o live e o pendrive de configuração. Um só disco interno = ele |
+| Hostname, usuário | `HOSTNAME_DEFAULT` e `USERNAME_DEFAULT` do topo do script (`RRR`, `alexandre`), ou `myarch.conf` |
+| Senha | `PASSWORD_HASH` (usuário e root com a mesma). Sem hash, pergunta a senha uma vez |
+| Aviso | mostra o disco e espera 10 segundos; qualquer tecla cancela |
+| Depois | agenda `myarch-firstboot.service`: no primeiro boot roda `~/.dotfiles/install.sh` no tty1 e reinicia no SDDM |
+
+O `myarch.conf` fica **fora do repositório**, na partição rotulada `Ventoy` do pendrive
+(pasta `myarch/`), porque carrega o hash da senha:
+
+```ini
+HOSTNAME=RRR
+USERNAME=alexandre
+PASSWORD_HASH='$6$...'      # openssl passwd -6
+```
+
+O arquivo é lido com `grep`, não com `source`. `DISK=/dev/...` também é aceito ali, pra
+forçar o alvo numa máquina com mais de um disco.
+
+Duas decisões que vêm com o automático e valem pro modo manual também: `wheel` tem
+`NOPASSWD` no sudo (desktop de uma pessoa só, pedido do dono), e root e usuário recebem a
+mesma senha.
 
 ## Se algo der errado
 
@@ -222,7 +254,7 @@ mount -o subvol=@snapshots /dev/nvme0n1p2 /mnt
 Editáveis no topo do `install.sh`:
 
 ```bash
-HOSTNAME_DEFAULT="ryzen"
+HOSTNAME_DEFAULT="RRR"
 USERNAME_DEFAULT="alexandre"
 TIMEZONE="America/Sao_Paulo"
 LOCALE="pt_BR.UTF-8"
@@ -280,15 +312,16 @@ SUBVOLUMES=(@ @home @log @pkg @snapshots)
 A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archlinux/archiso)
 (cópia do `releng`, o mesmo que gera a ISO oficial) com o que muda pra esta máquina:
 
-- teclado `br-abnt2` e `pt_BR.UTF-8` já no live, sem `loadkeys`;
+- teclado `br-abnt2`, `pt_BR.UTF-8` e fuso `America/Sao_Paulo` já no live, sem `loadkeys`;
 - `install.sh` e este README embutidos em `/root/myarch/`, então não precisa montar o Ventoy
   nem ter internet pra achar o instalador;
-- menu no tty1 depois do autologin (`myarch-menu`): instalar, Wi-Fi, baixar o instalador mais
-  novo, shell, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
+- menu no tty1 depois do autologin (`myarch-menu`): `1` instala automático (ver [Modo
+  automático](#modo-automático)), `2` instala perguntando, `3` baixa o instalador mais novo do
+  GitHub, shell, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
 - lista de pacotes enxuta (`archiso/packages.x86_64`, 40 pacotes): kernel, firmware, boot, rede
   (cabo e Wi-Fi), o que o `install.sh` chama e socorro básico (`ntfs-3g`, `exfatprogs`, `rsync`,
-  `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: PXE, clonezilla, VPN,
-  modem, leitor de tela, guest tools de VirtualBox/VMware/Hyper-V, cloud-init, smartcard.
+  `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: Wi-Fi, PXE, clonezilla,
+  VPN, modem, leitor de tela, guest tools de VirtualBox/VMware/Hyper-V, cloud-init, smartcard.
 
 Gerar exige Arch com root e o pacote `archiso`; o jeito sem máquina Linux é o workflow
 **build-iso** (Actions → build-iso → Run workflow), que roda num container `archlinux`,
