@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Menu do live ISO do myarch. Roda no tty1 depois do autologin; tambem pode ser chamado a mao.
 
-BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; BLD=$'\e[1m'; END=$'\e[0m'
+BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; RED=$'\e[1;31m'; BLD=$'\e[1m'; END=$'\e[0m'
 INSTALLER=/root/myarch/install.sh
 
 rede_ok() { ping -c1 -W2 archlinux.org &>/dev/null; }
+conf_ok() { blkid -L Ventoy &>/dev/null; }
 
 while true; do
     clear
@@ -18,20 +19,22 @@ while true; do
              |___/
 BANNER
     printf '%s\n' "$END"
-    if rede_ok; then printf '  rede: %sok%s\n' "$GRN" "$END"; else printf '  rede: %ssem internet%s (o instalador precisa; opcao 2 para Wi-Fi)\n' "$YEL" "$END"; fi
-    printf '  teclado: br-abnt2\n\n'
-    printf '  %s1%s) Instalar Arch com o myarch (APAGA o disco escolhido; ele pede confirmacao)\n' "$BLD" "$END"
-    printf '  %s2%s) Conectar no Wi-Fi (iwctl)\n' "$BLD" "$END"
-    printf '  %s3%s) Baixar a versao mais nova do instalador (git) e instalar\n' "$BLD" "$END"
+    if rede_ok; then printf '  rede: %sok%s\n' "$GRN" "$END"; else printf '  rede: %ssem internet%s (confira o cabo; o instalador precisa)\n' "$YEL" "$END"; fi
+    if conf_ok; then printf '  pendrive Ventoy: %sachado%s (le myarch/myarch.conf se existir)\n' "$GRN" "$END"; else printf '  pendrive Ventoy: nao achado (a senha vai ser perguntada)\n'; fi
+    printf '  teclado: br-abnt2   fuso: America/Sao_Paulo\n\n'
+    printf '  %s1%s) Instalar AUTOMATICO: maior disco interno, hostname rrr, usuario alexandre,\n' "$BLD" "$END"
+    printf '     senha do pendrive, dotfiles no primeiro boot. %sAPAGA o disco%s apos 10 s de aviso.\n' "$RED" "$END"
+    printf '  %s2%s) Instalar perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
+    printf '  %s3%s) Baixar a versao mais nova do instalador (git) e instalar automatico\n' "$BLD" "$END"
     printf '  %s4%s) Shell\n' "$BLD" "$END"
     printf '  %s5%s) Desligar\n\n' "$BLD" "$END"
     read -rp '  opcao: ' op
     case "$op" in
-        1) bash "$INSTALLER"; read -rp $'\n  [enter] volta ao menu ' _ ;;
-        2) printf '\n  dentro do iwctl: station wlan0 scan | station wlan0 get-networks | station wlan0 connect NOME | exit\n\n'; iwctl ;;
+        1) AUTO=1 bash "$INSTALLER"; read -rp $'\n  [enter] volta ao menu ' _ ;;
+        2) bash "$INSTALLER"; read -rp $'\n  [enter] volta ao menu ' _ ;;
         3) rede_ok || { printf '  sem internet\n'; sleep 2; continue; }
            rm -rf /root/myarch-git && git clone --depth 1 https://github.com/eualexandrerrr/myarch /root/myarch-git \
-             && bash /root/myarch-git/install.sh; read -rp $'\n  [enter] volta ao menu ' _ ;;
+             && AUTO=1 bash /root/myarch-git/install.sh; read -rp $'\n  [enter] volta ao menu ' _ ;;
         4) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
         5) poweroff ;;
         *) ;;

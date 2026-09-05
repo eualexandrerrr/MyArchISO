@@ -19,9 +19,7 @@ memtest86+
 memtest86+-efi
 edk2-shell
 
-# rede: cabo (systemd-networkd) e Wi-Fi (iwd); ssh pra dirigir a instalacao de outra maquina
-iwd
-wireless-regdb
+# rede: cabo (systemd-networkd, ja no base); ssh pra dirigir a instalacao de outra maquina
 systemd-resolvconf
 openssh
 
