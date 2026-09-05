@@ -21,16 +21,16 @@ KEYMAP="br-abnt2"
 X11_KEYMAP="br"
 ESP_SIZE="1GiB"
 FILESYSTEM="ext4"
-KERNEL_PARAMS=(nvidia_drm.modeset=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 rw quiet)
+KERNEL_PARAMS=(nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 nvidia.NVreg_UsePageAttributeTable=1 amd_pstate=active transparent_hugepage=always rw quiet)
 DOTFILES_REPO="https://github.com/eualexandrerrr/dotfiles"
 
 BASE_PACKAGES=(
-    base base-devel linux linux-headers linux-firmware
+    base base-devel linux-zen linux-zen-headers linux-firmware
     dosfstools e2fsprogs
     pacman-contrib
     networkmanager
     sudo git nano vim
-    intel-ucode amd-ucode
+    amd-ucode
     zsh
     efibootmgr
     zram-generator
@@ -381,18 +381,50 @@ vm.watermark_scale_factor = 125
 vm.page-cluster = 0
 SYSCTL
 
+# Mesmo valor da SteamOS: jogo grande em Proton mapeia mais memoria que o padrao permite.
+cat > /etc/sysctl.d/99-jogos.conf <<SYSCTL
+vm.max_map_count = 2147483642
+SYSCTL
+
+# esync/fsync do Wine e Proton precisam de muitos descritores de arquivo.
+mkdir -p /etc/systemd/system.conf.d /etc/systemd/user.conf.d
+printf '[Manager]\nDefaultLimitNOFILE=1024:524288\n' > /etc/systemd/system.conf.d/limites.conf
+printf '[Manager]\nDefaultLimitNOFILE=1024:524288\n' > /etc/systemd/user.conf.d/limites.conf
+
+# makepkg: todos os nucleos, sem pacote de debug (metade do tempo de build do AUR) e -march=native.
+mkdir -p /etc/makepkg.conf.d
+cat > /etc/makepkg.conf.d/99-desempenho.conf <<'MAKEPKG'
+MAKEFLAGS="-j\$(nproc)"
+CFLAGS="-march=native -O2 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection -fcf-protection -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+CXXFLAGS="\$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+RUSTFLAGS="-C opt-level=2 -C target-cpu=native"
+OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)
+MAKEPKG
+
+# Mirrors: reflector semanal so com espelhos do Brasil, por velocidade, https.
+mkdir -p /etc/xdg/reflector
+cat > /etc/xdg/reflector/reflector.conf <<'REFLECTOR'
+--save /etc/pacman.d/mirrorlist
+--country Brazil
+--protocol https
+--age 12
+--latest 10
+--sort rate
+REFLECTOR
+systemctl enable reflector.timer
+
 # O preset do pacote linux nem sempre traz o 'fallback' ligado. Quando nao traz,
 # o mkinitcpio -P gera so o initramfs normal, e a entrada de recuperacao do
 # systemd-boot fica apontando pra uma imagem que nunca existiu: o menu mostra
 # "Arch Linux (fallback)" e escolher nao boota. Ligar no PRESET, e nao gerar a
 # imagem na mao, e o que mantem ela viva: o hook do pacman roda mkinitcpio -P a
 # cada update de kernel.
-PRESET=/etc/mkinitcpio.d/linux.preset
+PRESET=/etc/mkinitcpio.d/linux-zen.preset
 if [ -f "\$PRESET" ]; then
     sed -i "s|^#[[:space:]]*\(fallback_image=\)|\1|" "\$PRESET"
     sed -i "s|^#[[:space:]]*\(fallback_options=\)|\1|" "\$PRESET"
     grep -q "^fallback_image=" "\$PRESET" \
-        || printf 'fallback_image="/boot/initramfs-linux-fallback.img"\n' >> "\$PRESET"
+        || printf 'fallback_image="/boot/initramfs-linux-zen-fallback.img"\n' >> "\$PRESET"
     grep -q "^fallback_options=" "\$PRESET" \
         || printf 'fallback_options="-S autodetect"\n' >> "\$PRESET"
     grep -qE "^PRESETS=.*fallback" "\$PRESET" \
@@ -431,21 +463,19 @@ LOADER
 ROOT_UUID=\$(blkid -s UUID -o value "$ROOT")
 
 cat > /boot/loader/entries/arch.conf <<ENTRY
-title   Arch Linux
-linux   /vmlinuz-linux
-initrd  /intel-ucode.img
+title   Arch Linux (zen)
+linux   /vmlinuz-linux-zen
 initrd  /amd-ucode.img
-initrd  /initramfs-linux.img
+initrd  /initramfs-linux-zen.img
 options root=UUID=\$ROOT_UUID ${KERNEL_PARAMS[*]}
 ENTRY
 
-if [ -f /boot/initramfs-linux-fallback.img ]; then
+if [ -f /boot/initramfs-linux-zen-fallback.img ]; then
     cat > /boot/loader/entries/arch-fallback.conf <<ENTRY
-title   Arch Linux (fallback)
-linux   /vmlinuz-linux
-initrd  /intel-ucode.img
+title   Arch Linux (zen, fallback)
+linux   /vmlinuz-linux-zen
 initrd  /amd-ucode.img
-initrd  /initramfs-linux-fallback.img
+initrd  /initramfs-linux-zen-fallback.img
 options root=UUID=\$ROOT_UUID ${KERNEL_PARAMS[*]}
 ENTRY
 else

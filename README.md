@@ -23,13 +23,15 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
 | Particionamento | GPT: ESP 1 GiB FAT32 + root no restante (tipo da root pelo GUID da Discoverable Partition Spec) |
 | Sistema de arquivos | ext4 com `noatime` (btrfs saiu em 09/2026, ver Decisões) |
-| Base | `pacstrap` com kernel, headers, firmware, microcode Intel e AMD |
+| Base | `pacstrap` com `linux-zen` + headers, firmware, `amd-ucode` |
 | Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
 | Usuário | Cria o usuário no `wheel` com shell `zsh`, sudo liberado |
 | Bootloader | `systemd-boot` com entrada normal e fallback, `systemd-boot-update.service` habilitado, entrada de NVRAM conferida |
 | Swap | Nenhuma partição: `zram-generator` com metade da RAM, teto de 8 GiB, `zstd` |
+| Desempenho | `amd_pstate=active`, `transparent_hugepage=always`, `vm.max_map_count` da SteamOS, `DefaultLimitNOFILE` pra esync, `makepkg` com `-j$(nproc)`, `!debug` e `-march=native` |
+| Mirrors | `reflector.timer` semanal: só Brasil, https, os 10 mais rápidos |
 | Cache | `paccache.timer` poda o cache do `pacman` |
-| NVIDIA | Já grava `nvidia_drm.modeset=1` e `NVreg_PreserveVideoMemoryAllocations=1` |
+| NVIDIA | Já grava `nvidia_drm.modeset=1`, `nvidia_drm.fbdev=1`, `NVreg_PreserveVideoMemoryAllocations=1` e `NVreg_UsePageAttributeTable=1` |
 | Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
 
 ## Requisitos
@@ -268,8 +270,12 @@ ESP_SIZE="1GiB"
 - **ESP montada com `fmask=0077,dmask=0077`** — sem isso o `systemd` reclama que o arquivo de
   random seed fica legível por qualquer usuário, e o `genfstab` carimba a montagem frouxa no
   `fstab`.
-- **Microcode Intel e AMD juntos** — o pacote errado é ignorado no boot, e o mesmo pendrive
-  serve pras duas máquinas.
+- **`linux-zen` e só `amd-ucode`** (09/2026) — máquina de jogo com Ryzen: o zen traz scheduler
+  e timers voltados a desktop; `intel-ucode` era peso morto. Pra outra máquina, trocar as duas
+  linhas em `BASE_PACKAGES` e nas entradas do `systemd-boot`.
+- **Ajustes de desempenho no chroot, não nos dotfiles** — `sysctl`, limites do systemd,
+  `makepkg.conf.d` e `reflector.conf` são do sistema, então nascem com ele. O que é de sessão
+  (perfil de energia, `ananicy-cpp`, modo da GPU) fica nos dotfiles.
 - **`mkinitcpio -P` antes de escrever as entradas do boot** — o preset do pacote `linux` nem
   sempre traz o `fallback` ligado. Sem conferir, a entrada "Arch Linux (fallback)" apareceria
   no menu apontando pra uma imagem que nunca foi gerada: só morde no dia em que você precisa
