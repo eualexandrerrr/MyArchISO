@@ -10,14 +10,7 @@ conf_ok() { blkid -L Ventoy &>/dev/null; }
 while true; do
     clear
     printf '%s' "$BLU"
-    cat <<'BANNER'
-                    _
-   _ __ ___  _   _ / \   _ __ ___| |__
-  | '_ ` _ \| | | / _ \ | '__/ __| '_ \
-  | | | | | | |_| / ___ \| | | (__| | | |
-  |_| |_| |_|\__, /_/   \_\_|  \___|_| |_|
-             |___/
-BANNER
+    printf '  %s\n' '=================================' '   M Y A R C H   |   Arch Linux' '================================='
     printf '%s\n' "$END"
     if rede_ok; then printf '  rede: %sok%s\n' "$GRN" "$END"; else printf '  rede: %ssem internet%s (confira o cabo; o instalador precisa)\n' "$YEL" "$END"; fi
     if conf_ok; then printf '  pendrive Ventoy: %sachado%s (le myarch/myarch.conf se existir)\n' "$GRN" "$END"; else printf '  pendrive Ventoy: nao achado (a senha vai ser perguntada)\n'; fi
