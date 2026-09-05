@@ -17,6 +17,7 @@ param(
   [int]$Cpus = 4,
   [int]$MonitorPort = 4445,
   [int]$SerialPort = 4446,
+  [int]$SshPort = 2223,
   [int]$VncDisplay = 2
 )
 $q = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -24,7 +25,7 @@ $share = 'C:\Program Files\qemu\share'
 $work = Split-Path $Disk
 New-Item -ItemType Directory -Force $work | Out-Null
 if (-not (Test-Path $Disk)) { & 'C:\Program Files\qemu\qemu-img.exe' create -f qcow2 $Disk 30G | Out-Null }
-$vars = Join-Path $work 'ovmf-vars-test.fd'
+$vars = Join-Path $work ([IO.Path]::GetFileNameWithoutExtension($Disk) + '-ovmf-vars.fd')
 if (-not (Test-Path $vars)) { Copy-Item "$share\edk2-i386-vars.fd" $vars }
 
 $args = @(
@@ -32,7 +33,7 @@ $args = @(
   '-drive',"if=pflash,format=raw,readonly=on,file=$share\edk2-x86_64-code.fd",
   '-drive',"if=pflash,format=raw,file=$vars",
   '-drive',"file=$Disk,if=virtio,format=qcow2",
-  '-nic','user,model=virtio-net-pci,hostfwd=tcp::2223-:22',
+  '-nic',"user,model=virtio-net-pci,hostfwd=tcp::$SshPort-:22",
   '-monitor',"tcp:127.0.0.1:$MonitorPort,server,nowait",
   '-vnc',"127.0.0.1:$VncDisplay",'-display','none','-vga','std',
   '-serial',"tcp:127.0.0.1:$SerialPort,server,nowait",
@@ -45,5 +46,5 @@ if (-not $NoCdrom) {
 }
 $line = ($args | ForEach-Object { if ($_ -match '[ ,]' -and $_ -notmatch '^"') { '"' + $_ + '"' } else { $_ } }) -join ' '
 $p = Start-Process -FilePath $q -ArgumentList $line -PassThru -WindowStyle Hidden `
-  -RedirectStandardError "$work\qemu-test.err" -RedirectStandardOutput "$work\qemu-test.out"
+  -RedirectStandardError "$work\qemu-$MonitorPort.err" -RedirectStandardOutput "$work\qemu-$MonitorPort.out"
 "qemu pid $($p.Id)  monitor 127.0.0.1:$MonitorPort  serial 127.0.0.1:$SerialPort  vnc :$VncDisplay"
