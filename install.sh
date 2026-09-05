@@ -120,7 +120,8 @@ load_conf() {
     local dev mnt val key
     dev="$(blkid -L "$CONF_LABEL" 2>/dev/null || true)"
     [[ -n $dev ]] || return 0
-    CONF_DISK="/dev/$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)"
+    local pk; pk="$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)"
+    CONF_DISK="${pk:+/dev/$pk}"; CONF_DISK="${CONF_DISK:-$dev}"
     mnt="$(mktemp -d)"
     mount -o ro "$dev" "$mnt" 2>/dev/null || { rmdir "$mnt"; return 0; }
     if [[ -f "$mnt/$CONF_FILE" ]]; then
@@ -142,10 +143,12 @@ load_conf() {
 
 live_disk() {
     # Disco que carrega o proprio live (ISO gravada direto ou pendrive do Ventoy).
-    local src
+    local src pk
     src="$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)"
     [[ -n $src && $src != /dev/loop* ]] || return 0
-    printf '/dev/%s\n' "$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)"
+    pk="$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)"
+    printf '%s
+' "${pk:+/dev/$pk}"
 }
 
 auto_disk() {
