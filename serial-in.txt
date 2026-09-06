@@ -1,1 +1,0 @@
-curl -fsSL -o /root/myarch/install.sh https://raw.githubusercontent.com/eualexandrerrr/myarch/main/install.sh && grep -c "|| true)" /root/myarch/install.sh && AUTO=1 bash /root/myarch/install.sh; echo INSTALL_RC=$?
