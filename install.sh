@@ -252,6 +252,10 @@ maior_livre() {
     [[ -n $saida ]] && printf '%s\n' "$saida"
 }
 
+setor_inicial() {
+    cat "/sys/class/block/$(basename "$1")/start" 2>/dev/null || echo 0
+}
+
 por_partlabel() {
     # Device de uma particao pelo rotulo GPT. udevadm settle porque o link em
     # /dev/disk/by-partlabel nasce assincrono e o script usaria o caminho antes de existir.
@@ -506,8 +510,20 @@ $(espacos_livres | awk '{printf "       %.1f GiB (setores %s a %s)\n", $3*512/10
     if [[ -n $HOME_DEV ]]; then
         ok "/home preservada em $HOME_DEV ($(lsblk -dno SIZE "$HOME_DEV")); nao sera formatada"
     else
-        local hini hfim hn
+        local hini hfim hn dados_ini=0
         read -r hini hfim hn < <(maior_livre "$HOME_MIN_GB" || true)
+        # INVARIANTE COMPARTILHADO COM O MyWinISO: a HOME tem de ficar DEPOIS da area de dados.
+        # O instalador do Windows protege "do offset de DADOS em diante" -- ele nao consegue ler ext4
+        # nem os rotulos do Linux, entao e por posicao que ele sabe o que preservar. Uma HOME criada
+        # ANTES da DADOS cairia na regiao que ele recria, e seria apagada na proxima instalacao do
+        # Windows. Melhor nao ter /home separada do que ter uma que some sem aviso.
+        if [[ -n ${DADOS_DEV:-} ]]; then
+            dados_ini="$(setor_inicial "$DADOS_DEV")"
+            if [[ -n ${hini:-} ]] && (( hini < dados_ini )); then
+                warn "o unico espaco livre para a /home fica ANTES de $DADOS_DEV ($DADOS_LABEL), e o instalador do Windows apagaria essa area na proxima formatacao. /home fica dentro da root."
+                hini=""
+            fi
+        fi
         if [[ -n ${hini:-} ]]; then
             sgdisk -n "0:${hini}:${hfim}" -t 0:8300 -c 0:"$HOME_LABEL" "$DISK" >/dev/null
             reler_particoes "$DISK"
