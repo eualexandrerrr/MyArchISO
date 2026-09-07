@@ -1,34 +1,115 @@
 #!/usr/bin/env bash
 # Menu do live ISO do myarch. Roda no tty1 depois do autologin; tambem pode ser chamado a mao.
+#
+# O instalador NAO vem da ISO: e baixado do GitHub na hora, como o primeiro-logon.ps1 do MyWinISO
+# faz com o setup.ps1. A copia embutida existe so como plano B para quando nao ha rede.
+#
+# O motivo: a ISO congela o install.sh do commit em que foi gerada, e uma ISO de duas semanas atras
+# instala o sistema de duas semanas atras. Isso ja quase custou caro -- a ISO de 05/09/2026 carrega a
+# versao que apagava o disco inteiro, sem preservar a particao de dados, e ela continuaria fazendo
+# isso para sempre. Buscar na hora faz a ISO envelhecer sem apodrecer.
 
 BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; RED=$'\e[1;31m'; BLD=$'\e[1m'; END=$'\e[0m'
-INSTALLER=/root/myarch/install.sh
+
+REPO=https://github.com/eualexandrerrr/MyArchISO
+RAW=https://raw.githubusercontent.com/eualexandrerrr/MyArchISO/main/install.sh
+EMBUTIDO=/root/myarch/install.sh
+BAIXADO=/root/myarch-novo/install.sh
 
 rede_ok() { ping -c1 -W2 archlinux.org &>/dev/null; }
 conf_ok() { blkid -L Ventoy &>/dev/null; }
+
+# Um install.sh so serve se souber preservar particao por rotulo. Sem esta checagem, um instalador
+# antigo (da ISO, ou um download que veio pela metade) apagaria a particao de dados sem avisar.
+# Vale para o baixado E para o embutido: os dois passam pelo mesmo crivo.
+protege_particao() {
+    [[ -s $1 ]] || return 1
+    head -1 "$1" | grep -q '^#!.*bash' || return 1
+    grep -q 'KEEP_LABELS'          "$1" || return 1
+    grep -q 'particoes_protegidas' "$1" || return 1
+    return 0
+}
+
+versao_embutida() {
+    if [[ -r /root/myarch/VERSAO ]]; then cat /root/myarch/VERSAO
+    elif [[ -e $EMBUTIDO ]]; then date -r "$EMBUTIDO" '+%d/%m/%Y'
+    else echo 'desconhecida'; fi
+}
+
+# Devolve, na saida padrao, o caminho do instalador a usar. Vazio = nao ha instalador confiavel.
+pega_instalador() {
+    local i resp http tam
+    if rede_ok; then
+        mkdir -p "$(dirname "$BAIXADO")"
+        for i in 1 2 3; do
+            printf '  %s--%s baixando o instalador do GitHub (tentativa %d de 3)\n' "$BLU" "$END" "$i" >&2
+            # -w para mostrar o codigo HTTP e o tamanho: prova de que veio de la agora, e nao de cache
+            http="$(curl -fsSL --max-time 20 -w '%{http_code}' -o "$BAIXADO.tmp" "$RAW" 2>/dev/null)" && {
+                tam="$(stat -c%s "$BAIXADO.tmp" 2>/dev/null || echo 0)"
+                if [[ $http == 200 ]] && protege_particao "$BAIXADO.tmp"; then
+                    mv -f "$BAIXADO.tmp" "$BAIXADO"; chmod +x "$BAIXADO"
+                    printf '  %sok%s HTTP %s, %s bytes -- usando a versao mais nova do GitHub\n' "$GRN" "$END" "$http" "$tam" >&2
+                    printf '%s\n' "$BAIXADO"; return 0
+                fi
+                printf '  %s!!%s resposta invalida (HTTP %s, %s bytes); descartada\n' "$YEL" "$END" "$http" "$tam" >&2
+            }
+            rm -f "$BAIXADO.tmp"
+            sleep 3
+        done
+        printf '  %s!!%s nao consegui baixar depois de 3 tentativas\n' "$YEL" "$END" >&2
+    else
+        printf '  %s!!%s sem internet\n' "$YEL" "$END" >&2
+    fi
+
+    # plano B: a copia que veio na ISO
+    if protege_particao "$EMBUTIDO"; then
+        printf '  %s!!%s usando a copia embutida na ISO (%s). Ela preserva as particoes, mas pode estar\n' "$YEL" "$END" "$(versao_embutida)" >&2
+        printf '     atras do repositorio. Com rede, prefira baixar.\n' >&2
+        printf '%s\n' "$EMBUTIDO"; return 0
+    fi
+
+    printf '\n  %sPAREI.%s O instalador embutido nesta ISO (%s) NAO sabe preservar particao por rotulo:\n' "$RED" "$END" "$(versao_embutida)" >&2
+    printf '  ele apagaria o disco inteiro, incluindo a particao de dados. E preciso rede para baixar\n' >&2
+    printf '  a versao nova, ou gere uma ISO nova a partir de %s\n' "$REPO" >&2
+    return 1
+}
+
+instalar() {   # $1 = "auto" ou "perguntando"
+    local inst
+    inst="$(pega_instalador)" || { read -rp $'\n  [enter] volta ao menu ' _; return; }
+    if [[ $1 == auto ]]; then AUTO=1 bash "$inst"; else bash "$inst"; fi
+    read -rp $'\n  [enter] volta ao menu ' _
+}
 
 while true; do
     clear
     printf '%s' "$BLU"
     printf '  %s\n' '=================================' '   M Y A R C H   |   Arch Linux' '================================='
     printf '%s\n' "$END"
-    if rede_ok; then printf '  rede: %sok%s\n' "$GRN" "$END"; else printf '  rede: %ssem internet%s (confira o cabo; o instalador precisa)\n' "$YEL" "$END"; fi
+    if rede_ok; then printf '  rede: %sok%s (o instalador vem do GitHub na hora)\n' "$GRN" "$END"
+    else printf '  rede: %ssem internet%s -- o instalador cai para a copia da ISO (%s)\n' "$YEL" "$END" "$(versao_embutida)"; fi
     if conf_ok; then printf '  pendrive Ventoy: %sachado%s (le myarch/myarch.conf se existir)\n' "$GRN" "$END"; else printf '  pendrive Ventoy: nao achado (a senha vai ser perguntada)\n'; fi
     printf '  teclado: br-abnt2   fuso: America/Sao_Paulo\n\n'
     printf '  %s1%s) Instalar AUTOMATICO: maior disco interno, hostname RRR, usuario alexandre,\n' "$BLD" "$END"
-    printf '     senha do pendrive, dotfiles no primeiro boot. %sAPAGA o disco%s apos 10 s de aviso.\n' "$RED" "$END"
+    printf '     senha do pendrive, dotfiles no primeiro boot. %sAPAGA o disco%s apos 10 s de aviso\n' "$RED" "$END"
+    printf '     (a particao de dados e a /home sao preservadas pelo rotulo).\n'
     printf '  %s2%s) Instalar perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
-    printf '  %s3%s) Baixar a versao mais nova do instalador (git) e instalar automatico\n' "$BLD" "$END"
+    printf '  %s3%s) Usar a copia embutida na ISO (%s), sem baixar\n' "$BLD" "$END" "$(versao_embutida)"
     printf '  %s4%s) Shell\n' "$BLD" "$END"
     printf '  %s5%s) Reiniciar\n' "$BLD" "$END"
     printf '  %s6%s) Desligar\n\n' "$BLD" "$END"
     read -rp '  opcao: ' op
     case "$op" in
-        1) AUTO=1 bash "$INSTALLER"; read -rp $'\n  [enter] volta ao menu ' _ ;;
-        2) bash "$INSTALLER"; read -rp $'\n  [enter] volta ao menu ' _ ;;
-        3) rede_ok || { printf '  sem internet\n'; sleep 2; continue; }
-           rm -rf /root/myarch-git && git clone --depth 1 https://github.com/eualexandrerrr/myarch /root/myarch-git \
-             && AUTO=1 bash /root/myarch-git/install.sh; read -rp $'\n  [enter] volta ao menu ' _ ;;
+        1) instalar auto ;;
+        2) instalar perguntando ;;
+        3) if protege_particao "$EMBUTIDO"; then
+               printf '  %s!!%s copia embutida (%s), sem baixar nada\n' "$YEL" "$END" "$(versao_embutida)"
+               bash "$EMBUTIDO"
+           else
+               printf '\n  %sPAREI.%s A copia embutida nesta ISO (%s) nao preserva particao por rotulo:\n' "$RED" "$END" "$(versao_embutida)"
+               printf '  ela apagaria o disco inteiro. Use a opcao 1 ou 2 com rede.\n'
+           fi
+           read -rp $'\n  [enter] volta ao menu ' _ ;;
         4) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
         5) reboot ;;
         6) poweroff ;;

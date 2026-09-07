@@ -182,7 +182,7 @@ Ou clonando, se preferir a versão mais nova:
 ```bash
 loadkeys br-abnt2
 pacman -Sy --noconfirm git
-git clone https://github.com/eualexandrerrr/myarch
+git clone https://github.com/eualexandrerrr/MyArchISO
 bash myarch/install.sh
 ```
 
@@ -351,6 +351,31 @@ ESP_SIZE="1GiB"
 - Exige boot em UEFI. BIOS legada não é suportada.
 - Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
 
+## O instalador vem do GitHub, não da ISO
+
+**As opções 1 e 2 do menu baixam o `install.sh` do GitHub na hora.** A cópia dentro da ISO é o
+plano B, para quando não há rede — e o menu diz de quando ela é.
+
+É o mesmo desenho do [MyWinISO](https://github.com/eualexandrerrr/MyWinISO), onde o
+`primeiro-logon.ps1` baixa o `setup.ps1` em vez de carregá-lo dentro do XML. O motivo: **a ISO
+congela o instalador do commit em que foi gerada**, e uma ISO de duas semanas atrás instala o
+sistema de duas semanas atrás. Isso quase custou caro aqui — a ISO de 05/09/2026 carrega a versão
+que apagava o disco inteiro, sem preservar a partição de dados, e continuaria fazendo isso para
+sempre. Buscar na hora faz a ISO envelhecer sem apodrecer.
+
+O que é baixado passa por uma checagem antes de rodar (`protege_particao`): tem de ser um script
+bash e tem de conter `KEEP_LABELS` e `particoes_protegidas`. **Um instalador que não sabe preservar
+partição por rótulo não roda** — nem baixado, nem embutido. Sem rede e com uma ISO antiga, o menu
+recusa e explica, em vez de apagar o disco:
+
+```
+PAREI. O instalador embutido nesta ISO (abc1234 de 05/09/2026) NAO sabe preservar particao
+por rotulo: ele apagaria o disco inteiro, incluindo a particao de dados.
+```
+
+A mesma checagem barra uma página de portal de wi-fi cativo e um download que veio pela metade —
+os dois casos em que "baixar da internet e executar" costuma dar errado.
+
 ## ISO própria
 
 A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archlinux/archiso)
@@ -360,8 +385,8 @@ A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archli
 - `install.sh` e este README embutidos em `/root/myarch/`, então não precisa montar o Ventoy
   nem ter internet pra achar o instalador;
 - menu no tty1 depois do autologin (`myarch-menu`): `1` instala automático (ver [Modo
-  automático](#modo-automático)), `2` instala perguntando, `3` baixa o instalador mais novo do
-  GitHub, shell, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
+  automático](#modo-automático)), `2` instala perguntando, `3` usa a cópia embutida sem baixar,
+  shell, reiniciar, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
 - lista de pacotes enxuta (`archiso/packages.x86_64`, 40 pacotes): kernel, firmware, boot, rede
   (cabo e Wi-Fi), o que o `install.sh` chama e socorro básico (`ntfs-3g`, `exfatprogs`, `rsync`,
   `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: Wi-Fi, PXE, clonezilla,
@@ -378,7 +403,9 @@ sudo ./archiso/build.sh        # ISO em archiso/out/
 ```
 
 O `build.sh` copia o `install.sh` da raiz pra dentro do perfil na hora do build (a cópia está
-no `.gitignore`), então a ISO sempre carrega a versão do commit em que foi gerada. Os symlinks
+no `.gitignore`) e grava um `VERSAO` com o commit e a data — é ele que o menu mostra ao avisar que
+está usando a cópia embutida. Essa cópia é só o plano B: com rede, o menu baixa a versão mais nova
+(veja [O instalador vem do GitHub](#o-instalador-vem-do-github-não-da-iso)). Os symlinks
 do `airootfs` estão no git como symlink de verdade: não edite essa pasta pelo Windows sem
 `core.symlinks=true`, senão eles viram arquivo de texto e o live quebra em silêncio.
 

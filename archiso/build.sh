@@ -26,8 +26,16 @@ done
 command -v mkarchiso >/dev/null || { echo "instale o pacote archiso: pacman -S archiso"; exit 1; }
 
 # Copia o instalador pra dentro do perfil. A pasta fica no .gitignore.
+# Esta copia e o PLANO B: o menu do live baixa o install.sh do GitHub na hora e so cai para ela
+# quando nao ha rede. O VERSAO existe para o aviso do menu poder dizer de quando ela e -- "copia
+# embutida (05/09/2026)" e informacao; "copia embutida" sozinho nao ajuda ninguem a decidir.
 install -Dm755 "$repo/install.sh" "$aqui/airootfs/root/myarch/install.sh"
 install -Dm644 "$repo/README.md"  "$aqui/airootfs/root/myarch/README.md"
+if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$repo" log -1 --format="%h de %ad" --date=format:"%d/%m/%Y" -- install.sh > "$aqui/airootfs/root/myarch/VERSAO"
+else
+    date "+%d/%m/%Y" > "$aqui/airootfs/root/myarch/VERSAO"
+fi
 
 # Data do ultimo commit deixa a ISO reproduzivel e o nome com a data certa.
 if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
