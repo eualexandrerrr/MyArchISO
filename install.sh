@@ -11,6 +11,31 @@ USERNAME_DEFAULT="alexandre"
 # hash, pergunta so a senha. Antes de apagar o disco mostra o resumo e espera 10 s.
 # No fim agenda o install.sh dos dotfiles pro primeiro boot (myarch-firstboot).
 AUTO="${AUTO:-0}"
+
+# Particoes que este instalador NUNCA toca, por ROTULO -- nao por posicao no disco.
+# Esta maquina tem um disco fisico so: o sistema vive na frente (a parte descartavel,
+# equivalente ao C: do Windows) e os dados vivem atras. Reinstalar o sistema nao pode
+# levar os dados junto. O MyWinISO protege os mesmos rotulos: os dois instaladores
+# compartilham este contrato, e por isso da pra reinstalar Arch ou Windows em qualquer
+# ordem sem que um estrague o outro.
+#   Alexandre = area NTFS, compartilhada com o Windows (e com a VM dele)
+#   HOME      = /home em ext4, o que sobrevive a formatar o sistema
+KEEP_LABELS="${KEEP_LABELS:-Alexandre HOME}"
+# WIPE_ALL=1 ignora a protecao e apaga o disco inteiro. Existe para disco novo e para
+# quando o dono realmente quer comecar do zero; nunca e o padrao, e o modo automatico
+# se recusa a usar.
+WIPE_ALL="${WIPE_ALL:-0}"
+HOME_LABEL="HOME"
+HOME_MIN_GB=32          # espaco livre minimo para valer a pena criar uma /home separada
+ROOT_MIN_GB=24          # abaixo disso nao cabe sistema + KDE + margem
+# Teto da root. Sistema, pacotes e cache do pacman cabem folgados em 120 GiB; o que passar
+# disso e melhor aproveitado na /home, que e a parte que sobrevive a formatar. Num disco
+# em que sobre menos que ROOT_MIN_GB + HOME_MIN_GB, a root leva o bloco inteiro e a /home
+# fica dentro dela -- o comportamento antigo.
+ROOT_MAX_GB="${ROOT_MAX_GB:-120}"
+DADOS_LABEL="Alexandre"
+DADOS_MOUNT="/mnt/dados"
+
 CONF_LABEL="${CONF_LABEL:-Ventoy}"
 CONF_FILE="myarch/myarch.conf"
 PASSWORD_HASH="${PASSWORD_HASH:-}"
@@ -37,6 +62,7 @@ BASE_PACKAGES=(
     reflector
     man-db man-pages
     openssh
+    ntfs-3g
 )
 
 RED=$'\e[1;31m'; GRN=$'\e[1;32m'; YEL=$'\e[1;33m'; BLU=$'\e[1;34m'; BLD=$'\e[1m'; END=$'\e[0m'
@@ -156,6 +182,83 @@ load_conf() {
     umount "$mnt"; rmdir "$mnt"
 }
 
+reler_particoes() {
+    # partprobe vem do pacote parted, que NAO esta na lista enxuta da ISO. Sem plano B a
+    # releitura da tabela virava um "|| true" silencioso e o device da particao nova podia
+    # nao existir a tempo. partx e blockdev sao do util-linux, que sempre esta presente.
+    partprobe "$1" 2>/dev/null || partx -u "$1" 2>/dev/null || blockdev --rereadpt "$1" 2>/dev/null || true
+    udevadm settle --timeout=10 2>/dev/null || true
+}
+
+alinha() { local s=$1; printf '%s' "$(( (s + 2047) / 2048 * 2048 ))"; }
+
+particoes_protegidas() {
+    # Imprime "DEVICE ROTULO TIPO TAMANHO" de cada particao de $DISK cujo rotulo (de
+    # sistema de arquivos ou de particao GPT) esteja em KEEP_LABELS. lsblk -P porque com
+    # -r um rotulo vazio desalinha as colunas e a particao errada viraria "protegida".
+    local NAME LABEL PARTLABEL FSTYPE SIZE l
+    while read -r linha; do
+        [[ -n $linha ]] || continue
+        NAME=""; LABEL=""; PARTLABEL=""; FSTYPE=""; SIZE=""
+        eval "$linha"
+        [[ $NAME == "$DISK" ]] && continue                       # o disco, nao uma particao
+        for l in $KEEP_LABELS; do
+            if [[ $LABEL == "$l" || $PARTLABEL == "$l" ]]; then
+                printf '%s %s %s %s\n' "$NAME" "${LABEL:-$PARTLABEL}" "${FSTYPE:-?}" "$SIZE"
+                break
+            fi
+        done
+    done < <(lsblk -Ppo NAME,LABEL,PARTLABEL,FSTYPE,SIZE "$DISK" 2>/dev/null)
+}
+
+espacos_livres() {
+    # Imprime "INICIO FIM SETORES" de cada buraco livre do GPT de $DISK, com o inicio ja
+    # alinhado em 1 MiB. Calculado a partir do sgdisk -p (que o script ja usa) para nao
+    # depender do parted, que a ISO enxuta pode nao trazer.
+    local first last cur=0 s e
+    read -r first last < <(sgdisk -p "$DISK" 2>/dev/null |
+        sed -n 's/.*First usable sector is \([0-9]*\), last usable sector is \([0-9]*\).*/\1 \2/p')
+    [[ -n ${first:-} && -n ${last:-} ]] || return 0
+    cur=$(alinha "$first")
+    while read -r s e; do
+        if (( s > cur )); then printf '%s %s %s\n' "$cur" "$((s-1))" "$((s-cur))"; fi
+        (( e >= cur )) && cur=$(alinha "$((e+1))")
+    done < <(sgdisk -p "$DISK" 2>/dev/null |
+        awk '/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+/ {print $2, $3}' | sort -n)
+    if (( last >= cur )); then printf '%s %s %s\n' "$cur" "$last" "$((last-cur+1))"; fi
+}
+
+primeiro_livre() {
+    # "INICIO FIM SETORES" do PRIMEIRO buraco (menor setor) com pelo menos $1 GiB.
+    # O sistema vai na frente do disco, no espaco que o sistema anterior liberou -- e nao
+    # no maior buraco, que e justamente o reservado para a /home. Escolher pelo tamanho
+    # punha a root no fim do disco e nao sobrava lugar para a /home: medido no teste.
+    local min_gb=$1 min_set s e n
+    min_set=$(( min_gb * 1024 * 1024 * 1024 / 512 ))
+    while read -r s e n; do
+        (( n >= min_set )) && { printf '%s %s %s\n' "$s" "$e" "$n"; return 0; }
+    done < <(espacos_livres)
+    return 1
+}
+
+maior_livre() {
+    # "INICIO FIM SETORES" do maior buraco com pelo menos $1 GiB; nada se nenhum servir.
+    local min_gb=$1 min_set s e n melhor=0 saida=""
+    min_set=$(( min_gb * 1024 * 1024 * 1024 / 512 ))
+    while read -r s e n; do
+        (( n >= min_set && n > melhor )) && { melhor=$n; saida="$s $e $n"; }
+    done < <(espacos_livres)
+    [[ -n $saida ]] && printf '%s\n' "$saida"
+}
+
+por_partlabel() {
+    # Device de uma particao pelo rotulo GPT. udevadm settle porque o link em
+    # /dev/disk/by-partlabel nasce assincrono e o script usaria o caminho antes de existir.
+    udevadm settle --timeout=10 2>/dev/null || true
+    local dev; dev="$(readlink -f "/dev/disk/by-partlabel/$1" 2>/dev/null || true)"
+    [[ -b ${dev:-} ]] && printf '%s\n' "$dev"
+}
+
 live_disk() {
     # Disco que carrega o proprio live (ISO gravada direto ou pendrive do Ventoy).
     local src pk
@@ -198,23 +301,67 @@ pick_disk() {
         [[ -b $DISK ]] || die "$DISK nao e um dispositivo de bloco"
     fi
 
+    # O que sera preservado neste disco, por rotulo
+    PROTEGIDAS="$(particoes_protegidas)"
+    if [[ $WIPE_ALL == 1 ]]; then
+        if [[ -n $PROTEGIDAS ]]; then
+            printf '%s' "$YEL"
+            printf '  WIPE_ALL=1: a protecao por rotulo esta DESLIGADA. Estas particoes serao apagadas:\n'
+            printf '%s\n' "$PROTEGIDAS" | while read -r dev rot fs tam; do printf '    %s  %s  %s  %s\n' "$dev" "$rot" "$fs" "$tam"; done
+            printf '%s' "$END"
+        fi
+        PROTEGIDAS=""
+    fi
+
     printf '\n%s' "$RED"
-    cat <<EOF
+    if [[ -n $PROTEGIDAS ]]; then
+        cat <<EOF
+================================================================
+  ATENCAO: o disco $DISK vai ser reparticionado.
+  Tamanho: $(lsblk -dno SIZE "$DISK")
+  Modelo:  $(lsblk -dno MODEL "$DISK")
+
+  Tudo que NAO estiver na lista de preservadas abaixo sera APAGADO.
+================================================================
+EOF
+    else
+        cat <<EOF
 ================================================================
   ATENCAO: TODO o conteudo de $DISK vai ser APAGADO.
   Tamanho: $(lsblk -dno SIZE "$DISK")
   Modelo:  $(lsblk -dno MODEL "$DISK")
 ================================================================
 EOF
+    fi
     printf '%s\n' "$END"
     lsblk "$DISK"
     printf '\n'
+
+    if [[ -n $PROTEGIDAS ]]; then
+        printf '%s  preservadas (rotulo em KEEP_LABELS="%s"), nao serao formatadas:%s\n' "$GRN" "$KEEP_LABELS" "$END"
+        printf '%s\n' "$PROTEGIDAS" | while read -r dev rot fs tam; do
+            printf '%s    %s  rotulo %s  %s  %s%s\n' "$GRN" "$dev" "$rot" "$fs" "$tam" "$END"
+        done
+        printf '\n'
+    elif [[ $AUTO == 1 && $WIPE_ALL != 1 ]]; then
+        # Modo automatico so apaga disco inteiro se o disco realmente nao tiver nada a
+        # proteger. Um disco com dados e sem os rotulos certos seria destruido em silencio
+        # depois de 10 segundos, e ninguem esta olhando a tela no modo automatico.
+        if [[ -n "$(lsblk -rno NAME "$DISK" | tail -n +2)" ]]; then
+            die "modo automatico: $DISK ja tem particoes e nenhuma com rotulo de KEEP_LABELS (\"$KEEP_LABELS\").
+     Nao vou apagar um disco com dados sem confirmacao. Rode sem AUTO=1, ou com WIPE_ALL=1 se e isso mesmo."
+        fi
+    fi
 
     local confirm
     if [[ $AUTO == 1 ]]; then
         printf '%s  modo automatico: hostname %s, usuario %s, senha %s%s\n' "$YEL" "$HOSTNAME_DEFAULT" "$USERNAME_DEFAULT" \
             "$([[ -n $PASSWORD_HASH ]] && echo 'do pendrive' || echo 'vai ser perguntada')" "$END"
-        printf '%s  apagando %s em 10 segundos. Qualquer tecla cancela.%s\n' "$RED" "$DISK" "$END"
+        if [[ -n $PROTEGIDAS ]]; then
+            printf '%s  reparticionando %s em 10 segundos (as preservadas acima ficam). Qualquer tecla cancela.%s\n' "$RED" "$DISK" "$END"
+        else
+            printf '%s  apagando %s em 10 segundos. Qualquer tecla cancela.%s\n' "$RED" "$DISK" "$END"
+        fi
         if read -rs -t 10 -n 1 confirm; then die "cancelado, nada foi alterado"; fi
         printf '\n'
     else
@@ -222,12 +369,10 @@ EOF
         [[ $confirm == "$DISK" ]] || die "confirmacao nao bateu, nada foi alterado"
     fi
 
-    if [[ $DISK == *nvme* || $DISK == *mmcblk* ]]; then
-        ESP="${DISK}p1"; ROOT="${DISK}p2"
-    else
-        ESP="${DISK}1"; ROOT="${DISK}2"
-    fi
-    ok "alvo: $DISK  (ESP=$ESP  ROOT=$ROOT)"
+    # ESP, ROOT e HOME nao sao mais "p1 e p2": com particao preservada no meio do disco a
+    # numeracao deixa de ser previsivel. Quem descobre os caminhos e o particionador, pelo
+    # rotulo GPT que ele mesmo grava.
+    ok "alvo: $DISK"
 }
 
 ask_identity() {
@@ -273,22 +418,114 @@ ask_identity() {
     ok "usuario $USERNAME em $HOSTNAME"
 }
 
-wipe_disk() {
+partition_disk() {
     log "particionando $DISK"
     swapoff --all 2>/dev/null || true
     umount -R /mnt 2>/dev/null || true
-    wipefs -af "$DISK" >/dev/null
-    sgdisk --zap-all "$DISK" >/dev/null
-    partprobe "$DISK" 2>/dev/null || true
+
+    HOME_DEV=""; HOME_NOVA=0; DADOS_DEV=""
+
+    if [[ -z $PROTEGIDAS ]]; then
+        # Disco sem nada a preservar: caminho de sempre, GPT do zero.
+        wipefs -af "$DISK" >/dev/null
+        sgdisk --zap-all "$DISK" >/dev/null
+    else
+        # Apaga so o que NAO esta protegido, uma particao por vez. O wipefs antes do
+        # sgdisk -d limpa a assinatura do sistema de arquivos: sem isso o blkid ainda
+        # acha um "ntfs" ou "ext4" fantasma no mesmo lugar depois, e o instalador
+        # seguinte pode se confundir sobre o que ha no disco.
+        local dev protegida l LABEL PARTLABEL NAME num
+        while read -r linha; do
+            [[ -n $linha ]] || continue
+            NAME=""; LABEL=""; PARTLABEL=""
+            eval "$linha"
+            [[ $NAME == "$DISK" ]] && continue
+            protegida=0
+            for l in $KEEP_LABELS; do
+                [[ $LABEL == "$l" || $PARTLABEL == "$l" ]] && { protegida=1; break; }
+            done
+            num="$(cat "/sys/class/block/$(basename "$NAME")/partition" 2>/dev/null || true)"
+            [[ -n $num ]] || continue
+            if (( protegida )); then
+                sub "mantendo $NAME (particao $num, rotulo ${LABEL:-$PARTLABEL})"
+                [[ $LABEL == "$HOME_LABEL"  || $PARTLABEL == "$HOME_LABEL"  ]] && HOME_DEV="$NAME"
+                [[ $LABEL == "$DADOS_LABEL" || $PARTLABEL == "$DADOS_LABEL" ]] && DADOS_DEV="$NAME"
+            else
+                sub "apagando $NAME (particao $num${LABEL:+, rotulo $LABEL})"
+                wipefs -af "$NAME" >/dev/null 2>&1 || true
+                sgdisk -d "$num" "$DISK" >/dev/null
+            fi
+        done < <(lsblk -Ppo NAME,LABEL,PARTLABEL "$DISK" 2>/dev/null)
+        reler_particoes "$DISK"
+        sleep 1
+    fi
+
+    # ESP + ROOT no maior buraco que couber. Fim explicito, sempre: com particao
+    # preservada depois no disco, um "-n 2:0:0" avancaria por cima dela.
+    local ini fim n esp_set esp_fim root_fim sobra
+    read -r ini fim n < <(primeiro_livre "$ROOT_MIN_GB" || true)
+    [[ -n ${ini:-} ]] || die "nao ha espaco livre contiguo de ${ROOT_MIN_GB} GiB em $DISK para o sistema.
+     Livre agora:
+$(espacos_livres | awk '{printf "       %.1f GiB (setores %s a %s)\n", $3*512/1073741824, $1, $2}')"
+
+    esp_set=$(( $(numfmt --from=iec "${ESP_SIZE%iB}iB" 2>/dev/null || echo 1073741824) / 512 ))
+    esp_fim=$(( ini + esp_set - 1 ))
+    (( esp_fim < fim )) || die "o buraco escolhido nao cabe ESP + root"
+
+    # Teto na root: o que passar de ROOT_MAX_GB fica livre para a /home, desde que o resto
+    # ainda valha uma particao. Sem isso, num disco novo a root come o disco inteiro e a
+    # /home separada -- a razao de tudo isto existir -- nunca chega a ser criada.
+    root_fim=$fim
+    if (( (fim - esp_fim) * 512 > ROOT_MAX_GB * 1024 * 1024 * 1024 )); then
+        sobra=$(( fim - (esp_fim + ROOT_MAX_GB * 1024 * 1024 * 1024 / 512) ))
+        if (( sobra * 512 >= HOME_MIN_GB * 1024 * 1024 * 1024 )); then
+            root_fim=$(( esp_fim + ROOT_MAX_GB * 1024 * 1024 * 1024 / 512 ))
+            sub "root limitada a ${ROOT_MAX_GB} GiB; o resto do bloco fica para a /home"
+        fi
+    fi
 
     # ef00 = EFI System. A root usa o GUID da Discoverable Partition Specification
     # (root-x86-64) em vez do generico 8300: com ele o systemd acha a raiz sozinho
     # se o root= sumir da linha de comando do kernel.
-    sgdisk -n 1:0:+"$ESP_SIZE" -t 1:ef00 -c 1:"EFI" "$DISK" >/dev/null
-    sgdisk -n 2:0:0 -t 2:4f68bce3-e8cd-4db1-96e7-fbcaf984b709 -c 2:"ROOT" "$DISK" >/dev/null
-    partprobe "$DISK" 2>/dev/null || true
+    # "-n 0:" deixa o sgdisk escolher o numero livre: com a preservada ocupando o 5,
+    # numero fixo nao serve mais. Quem identifica depois e o rotulo GPT.
+    sgdisk -n "0:${ini}:${esp_fim}" -t 0:ef00 -c 0:"EFI" "$DISK" >/dev/null
+    sgdisk -n "0:$(alinha $((esp_fim+1))):${root_fim}" -t 0:4f68bce3-e8cd-4db1-96e7-fbcaf984b709 -c 0:"ROOT" "$DISK" >/dev/null
+    reler_particoes "$DISK"
     sleep 2
-    ok "GPT criado: ESP $ESP_SIZE + root no restante"
+
+    ESP="$(por_partlabel EFI)"   || true
+    ROOT="$(por_partlabel ROOT)" || true
+    [[ -b ${ESP:-}  ]] || die "nao achei a particao EFI recem-criada em $DISK"
+    [[ -b ${ROOT:-} ]] || die "nao achei a particao ROOT recem-criada em $DISK"
+    ok "ESP $ESP_SIZE em $ESP; root em $ROOT ($(lsblk -dno SIZE "$ROOT"))"
+
+    # /home propria: e ela que faz o sistema ser descartavel. Se ja existe uma com o
+    # rotulo HOME, ela e reaproveitada INTACTA -- e o ponto inteiro deste instalador.
+    if [[ -n $HOME_DEV ]]; then
+        ok "/home preservada em $HOME_DEV ($(lsblk -dno SIZE "$HOME_DEV")); nao sera formatada"
+    else
+        local hini hfim hn
+        read -r hini hfim hn < <(maior_livre "$HOME_MIN_GB" || true)
+        if [[ -n ${hini:-} ]]; then
+            sgdisk -n "0:${hini}:${hfim}" -t 0:8300 -c 0:"$HOME_LABEL" "$DISK" >/dev/null
+            reler_particoes "$DISK"
+            sleep 2
+            HOME_DEV="$(por_partlabel "$HOME_LABEL")" || true
+            if [[ -b ${HOME_DEV:-} ]]; then
+                HOME_NOVA=1
+                ok "/home nova em $HOME_DEV ($(lsblk -dno SIZE "$HOME_DEV")); da proxima formatacao em diante ela sobrevive"
+            else
+                warn "criei a particao $HOME_LABEL mas nao achei o device; /home fica dentro da root"
+                HOME_DEV=""
+            fi
+        else
+            sub "sem espaco livre de ${HOME_MIN_GB} GiB para uma /home separada; ela fica dentro da root"
+        fi
+    fi
+
+    [[ -n $DADOS_DEV ]] && ok "area de dados preservada em $DADOS_DEV ($(lsblk -dno SIZE "$DADOS_DEV")), sera montada em $DADOS_MOUNT"
+    printf '\n'; sgdisk -p "$DISK" | tail -n +6
 }
 
 make_filesystems() {
@@ -297,6 +534,12 @@ make_filesystems() {
     # ext4 por decisao do dono (05/09/2026): menos overhead que btrfs, sem snapshot.
     mkfs.ext4 -F -L ROOT "$ROOT"
     ok "ESP em FAT32, root em ext4"
+    if (( HOME_NOVA )); then
+        mkfs.ext4 -F -L "$HOME_LABEL" "$HOME_DEV"
+        ok "/home nova formatada em ext4"
+    elif [[ -n $HOME_DEV ]]; then
+        ok "/home em $HOME_DEV NAO foi formatada (preservada, com seus dados)"
+    fi
 }
 
 mount_filesystems() {
@@ -304,6 +547,10 @@ mount_filesystems() {
     mount -o noatime "$ROOT" /mnt
     mkdir -p /mnt/boot
     mount -o fmask=0077,dmask=0077 "$ESP" /mnt/boot
+    if [[ -n $HOME_DEV ]]; then
+        mkdir -p /mnt/home
+        mount -o noatime "$HOME_DEV" /mnt/home
+    fi
     ok "arvore montada em /mnt"
     findmnt -R /mnt -o TARGET,SOURCE,FSTYPE
 }
@@ -361,7 +608,22 @@ Section "InputClass"
 EndSection
 KB
 
-useradd -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh "$USERNAME"
+# Com /home preservada, o usuario novo PRECISA nascer com o mesmo UID/GID de antes: o
+# dono de um arquivo no ext4 e um numero, nao um nome. UID diferente e o home inteiro
+# aparecendo como de outra pessoa -- ssh, git e o proprio KDE param de escrever.
+UID_ANTIGO=""; GID_ANTIGO=""
+if [ -d "/home/$USERNAME" ]; then
+    UID_ANTIGO="\$(stat -c %u "/home/$USERNAME" 2>/dev/null || true)"
+    GID_ANTIGO="\$(stat -c %g "/home/$USERNAME" 2>/dev/null || true)"
+fi
+if [ -n "\${GID_ANTIGO:-}" ] && ! getent group "\$GID_ANTIGO" >/dev/null; then
+    groupadd -g "\$GID_ANTIGO" "$USERNAME"
+fi
+useradd -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh \
+    \${UID_ANTIGO:+-u "\$UID_ANTIGO"} \${GID_ANTIGO:+-g "\$GID_ANTIGO"} "$USERNAME"
+if [ -n "\${UID_ANTIGO:-}" ]; then
+    printf 'home preservada: usuario %s recriado com UID %s e GID %s\n' "$USERNAME" "\$UID_ANTIGO" "\${GID_ANTIGO:-}"
+fi
 if [ -n "\${PW_HASH:-}" ]; then
     # hash SHA-512 vindo do pendrive (openssl passwd -6); -e = ja criptografado
     printf 'root:%s\n' "\$PW_HASH" | chpasswd -e
@@ -539,11 +801,43 @@ CHROOT
     ok "sistema configurado, systemd-boot instalado"
 }
 
+fstab_dados() {
+    # A area NTFS nao e montada durante a instalacao (nao precisa, e montar NTFS sujo do
+    # live so cria chance de erro): entra no fstab e o sistema instalado monta no boot.
+    [[ -n ${DADOS_DEV:-} ]] || return 0
+    log "area de dados no fstab"
+    local uuid uid gid
+    uuid="$(blkid -s UUID -o value "$DADOS_DEV" 2>/dev/null || true)"
+    [[ -n $uuid ]] || { warn "nao consegui ler o UUID de $DADOS_DEV; monte $DADOS_MOUNT a mao depois"; return 0; }
+    uid="$(arch-chroot /mnt id -u "$USERNAME" 2>/dev/null || echo 1000)"
+    gid="$(arch-chroot /mnt id -g "$USERNAME" 2>/dev/null || echo 1000)"
+    mkdir -p "/mnt$DADOS_MOUNT"
+    # ntfs3 e o driver do kernel (desde a 5.15), nao o ntfs-3g do FUSE: bem mais rapido e
+    # sem processo em espaco de usuario. uid/gid porque o NTFS nao guarda dono POSIX --
+    # sem eles a area inteira fica de root. nofail para o boot nao parar se o disco sumir.
+    # Se o Windows tiver desligado com Inicio Rapido ou hibernado, o volume vem "sujo" e o
+    # ntfs3 monta somente leitura, de proposito; e isso que o aviso do README trata.
+    cat >> /mnt/etc/fstab <<FSTAB
+
+# $DADOS_LABEL (NTFS): area compartilhada com o Windows -- e com a VM dele, que pode
+# receber esta particao como bloco e enxergar o mesmo D: de sempre. Preservada por rotulo.
+UUID=$uuid  $DADOS_MOUNT  ntfs3  uid=$uid,gid=$gid,umask=022,windows_names,noatime,nofail,x-systemd.device-timeout=5s  0 0
+FSTAB
+    ok "$DADOS_MOUNT no fstab (ntfs3, dono $uid:$gid, nofail)"
+}
+
 stage_dotfiles() {
     log "deixando os dotfiles prontos para o primeiro boot"
     local home="/mnt/home/$USERNAME"
-    arch-chroot /mnt sudo -u "$USERNAME" git clone --depth 1 "$DOTFILES_REPO" "/home/$USERNAME/.dotfiles" \
-        || { warn "clone dos dotfiles falhou, faca manualmente depois"; return 0; }
+    # Com /home preservada o clone ja existe: atualizar, nao clonar por cima.
+    if [[ -d /mnt/home/$USERNAME/.dotfiles/.git ]]; then
+        sub "dotfiles ja estavam na /home preservada; atualizando"
+        arch-chroot /mnt sudo -u "$USERNAME" git -C "/home/$USERNAME/.dotfiles" pull -q --ff-only \
+            || warn "git pull nos dotfiles falhou; segue com a copia que ja estava la"
+    else
+        arch-chroot /mnt sudo -u "$USERNAME" git clone --depth 1 "$DOTFILES_REPO" "/home/$USERNAME/.dotfiles" \
+            || { warn "clone dos dotfiles falhou, faca manualmente depois"; return 0; }
+    fi
 
     cat > "$home/PROXIMOS-PASSOS.txt" <<STEPS
 Depois de reiniciar e logar como $USERNAME:
@@ -667,11 +961,12 @@ main() {
     load_conf
     pick_disk
     ask_identity
-    wipe_disk
+    partition_disk
     make_filesystems
     mount_filesystems
     install_base
     configure_system
+    fstab_dados
     stage_dotfiles
     stage_firstboot
     finish

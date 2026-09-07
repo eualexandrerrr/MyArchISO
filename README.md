@@ -21,7 +21,10 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 |:--|:--|
 | Checagem | Exige root, boot em UEFI e rede ativa |
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
-| Particionamento | GPT: ESP 1 GiB FAT32 + root no restante (tipo da root pelo GUID da Discoverable Partition Spec) |
+| **Partições preservadas** | Rótulos de `KEEP_LABELS` (`Alexandre` e `HOME`) **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Partições preservadas](#partições-preservadas) |
+| Particionamento | GPT: ESP 1 GiB FAT32 + root no primeiro espaço livre que couber, com teto de `ROOT_MAX_GB` (tipo da root pelo GUID da Discoverable Partition Spec) |
+| `/home` separada | Partição própria com rótulo `HOME`: criada no espaço que sobrar, **reaproveitada intacta** se já existir. É ela que faz reinstalar o sistema não custar nada |
+| Área de dados | Partição NTFS rotulada `Alexandre` entra no `fstab` em `/mnt/dados` pelo driver `ntfs3` do kernel, com dono do usuário |
 | Sistema de arquivos | ext4 com `noatime` (btrfs saiu em 09/2026, ver Decisões) |
 | Base | `pacstrap` com `linux-zen` + headers, firmware, `amd-ucode` |
 | Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
@@ -48,17 +51,52 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 O script instala microcode da Intel **e** da AMD. O errado é ignorado no boot, então o mesmo
 pendrive serve pras duas plataformas.
 
-## Antes de apagar o disco
+## Partições preservadas
 
-**O disco escolhido é apagado por inteiro.** Não existe modo "instalar ao lado": o script faz
-`wipefs` e `sgdisk --zap-all` no dispositivo, e reparticiona do zero. Não há redimensionamento,
-não há preservação de partição, não há dual boot no mesmo disco.
+**Rótulo é sagrado, posição não importa.** O instalador apaga tudo no disco escolhido **menos**
+as partições cujo rótulo (de sistema de arquivos ou de partição GPT) esteja em `KEEP_LABELS`:
+
+```bash
+KEEP_LABELS="Alexandre HOME"     # padrão
+```
+
+| Rótulo | O que é | Papel |
+|:--|:--|:--|
+| `HOME` | ext4, montada em `/home` | Tudo do usuário: `~/.config`, `~/.claude`, `~/.dotfiles`, projetos, biblioteca da Steam. **Nunca é formatada** se já existir |
+| `Alexandre` | NTFS, montada em `/mnt/dados` | Área compartilhada com o Windows — e com a VM dele, que pode receber esta partição como bloco e enxergar o mesmo disco de sempre |
+
+Isso é o que torna o sistema descartável de verdade: a root é a única coisa que se perde ao
+reinstalar, e ela não guarda nada seu. **É o mesmo contrato do
+[MyWinISO](https://github.com/eualexandrerrr/MyWinISO)** — os dois instaladores protegem os mesmos
+rótulos, então dá para reinstalar Arch ou Windows em qualquer ordem sem que um estrague o outro.
+
+Com `/home` preservada o usuário é recriado com o **mesmo UID e GID de antes**, lidos da própria
+pasta: dono no ext4 é um número, não um nome, e UID diferente deixaria o home inteiro parecendo de
+outra pessoa.
+
+Para ignorar a proteção e apagar o disco inteiro — disco novo, ou recomeço mesmo:
+
+```bash
+WIPE_ALL=1 bash install.sh
+```
+
+O modo automático **recusa** `WIPE_ALL`, e também recusa um disco que já tenha partições mas nenhuma
+protegida: ninguém está olhando a tela no modo automático, e dez segundos não são aviso suficiente
+para destruir dados.
+
+## Antes de instalar
+
+**O que não estiver protegido por rótulo é apagado.** Não existe redimensionamento: o instalador só
+cria partição em espaço já livre. Se você quer uma área de dados menor para abrir espaço, encolha-a
+**antes**, pelo sistema que já está instalado (o Gerenciamento de Disco do Windows faz isso no NTFS
+sem risco), e deixe o espaço livre esperando.
 
 Antes de bootar o pendrive:
 
-1. **Tire o que só existe naquele disco.** Repositório sem push, pasta que não está em backup,
-   chave de SSH, arquivo de configuração de aplicativo. Vale rodar `git status` em cada
-   projeto — trabalho não commitado não vai pro GitHub sozinho.
+1. **Tire o que só existe naquele disco e fora das partições protegidas.** Repositório sem push,
+   pasta que não está em backup, chave de SSH, arquivo de configuração de aplicativo. Vale rodar
+   `git status` em cada projeto — trabalho não commitado não vai pro GitHub sozinho. O que estiver
+   na `HOME` ou na `Alexandre` fica; o resto do disco, não.
 2. **Se havia Windows com BitLocker, salve a chave de recuperação primeiro.** Desligar o
    Secure Boot muda o que o TPM mede, e o Windows pode exigir os 48 dígitos no boot seguinte.
    Isso importa mesmo se o plano é apagar o Windows: se algo der errado no meio, você quer
@@ -193,7 +231,7 @@ Não pergunta nada. Serve pra reinstalar a mesma máquina sem digitar:
 
 | o quê | de onde vem |
 |:--|:--|
-| Disco | o maior disco interno (não removível, não USB), fora o que carrega o live e o pendrive de configuração. Um só disco interno = ele |
+| Disco | o maior disco interno (não removível, não USB), fora o que carrega o live e o pendrive de configuração. Um só disco interno = ele. **Se o disco já tiver partições e nenhuma protegida, ele para** em vez de apagar |
 | Hostname, usuário | `HOSTNAME_DEFAULT` e `USERNAME_DEFAULT` do topo do script (`RRR`, `alexandre`), ou `myarch.conf` |
 | Senha | `PASSWORD_HASH` (usuário e root com a mesma). Sem hash, pergunta a senha uma vez |
 | Aviso | mostra o disco e espera 10 segundos; qualquer tecla cancela |
@@ -276,6 +314,21 @@ ESP_SIZE="1GiB"
 - **Ajustes de desempenho no chroot, não nos dotfiles** — `sysctl`, limites do systemd,
   `makepkg.conf.d` e `reflector.conf` são do sistema, então nascem com ele. O que é de sessão
   (perfil de energia, `ananicy-cpp`, modo da GPU) fica nos dotfiles.
+- **Preservar por rótulo, e não por posição** (09/2026) — o instalador do Windows desta casa
+  protegia "a última partição do disco". Basta criar uma partição depois dela para a regra
+  apontar para a errada. Rótulo não muda de lugar quando o disco é reparticionado, número
+  muda; por isso a proteção é por `KEEP_LABELS` e o número da partição é descoberto na hora.
+- **Sistema no primeiro espaço livre, `/home` no maior** — escolher o maior buraco para a root
+  parece natural e é errado: num disco onde o espaço grande está no fim, a root nascia lá e
+  não sobrava lugar para a `/home` separada. Medido em teste com disco de mentira antes de
+  encostar em disco de verdade.
+- **`/home` em partição própria em vez de junções** — no Windows a área persistente é feita
+  de junções de `%APPDATA%` para outro disco, com tarefa agendada consertando o que estava em
+  uso. No Linux nada disso é preciso: `/home` numa partição que o instalador não formata
+  resolve o mesmo problema sem nenhuma peça móvel.
+- **`ntfs3` e não `ntfs-3g`** — o `ntfs3` é driver de kernel desde a 5.15; o `ntfs-3g` roda em
+  espaço de usuário pelo FUSE e é bem mais lento. O pacote `ntfs-3g` continua instalado pelas
+  ferramentas (`mkntfs`, `ntfsfix`), não pela montagem.
 - **`mkinitcpio -P` antes de escrever as entradas do boot** — o preset do pacote `linux` nem
   sempre traz o `fallback` ligado. Sem conferir, a entrada "Arch Linux (fallback)" apareceria
   no menu apontando pra uma imagem que nunca foi gerada: só morde no dia em que você precisa
@@ -290,10 +343,11 @@ ESP_SIZE="1GiB"
 
 ## Avisos
 
-- O script **apaga o disco escolhido por inteiro**. Ele pede confirmação digitada, mas
-  confira o alvo com `lsblk` antes. Não existe modo de instalar ao lado de outro sistema
-  no mesmo disco: para dual boot, use um disco separado para cada sistema, e escolha
-  qual bootar pelo menu da placa.
+- O script **apaga tudo que não estiver protegido por rótulo** no disco escolhido. Ele pede
+  confirmação digitada e lista o que vai preservar, mas confira o alvo com `lsblk` antes.
+  Sistema ao lado de sistema no mesmo disco não existe aqui: a root é sempre recriada, então
+  instalar o Arch remove o Windows que estivesse na frente do disco (e vice-versa) — o que
+  sobrevive são os dados, não o outro sistema.
 - Exige boot em UEFI. BIOS legada não é suportada.
 - Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
 
