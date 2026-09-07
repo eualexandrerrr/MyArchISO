@@ -21,10 +21,10 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 |:--|:--|
 | Checagem | Exige root, boot em UEFI e rede ativa |
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
-| **Partições preservadas** | Rótulos de `KEEP_LABELS` (`Files` e `HOME`) **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Partições preservadas](#partições-preservadas) |
-| Particionamento | GPT: ESP 1 GiB FAT32 + root no primeiro espaço livre que couber, com teto de `ROOT_MAX_GB` (tipo da root pelo GUID da Discoverable Partition Spec) |
-| `/home` separada | Partição própria com rótulo `HOME`: criada no espaço que sobrar, **reaproveitada intacta** se já existir. É ela que faz reinstalar o sistema não custar nada |
-| Área de dados | Partição NTFS rotulada `Alexandre` entra no `fstab` em `/mnt/dados` pelo driver `ntfs3` do kernel, com dono do usuário |
+| **Partições preservadas** | Rótulos de `KEEP_LABELS` **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Duas partições](#duas-partições) |
+| Particionamento | **Duas partições, só.** GPT: ESP 1 GiB FAT32 + root com teto de 100 GiB (`ROOT_MAX_GB`) + o resto do disco na partição de dados |
+| Partição de dados | Rótulo `Files`, ext4, montada em **`/home`**: criada se não existir, **reaproveitada intacta** se existir. É ela que faz reinstalar o sistema não custar nada |
+| Desempenho do ext4 | `fast_commit` (caminho curto do `fsync`), `-m 1` na root e `-m 0` nos dados, tabelas escritas no `mkfs` (`lazy_itable_init=0`) |
 | Sistema de arquivos | ext4 com `noatime` (btrfs saiu em 09/2026, ver Decisões) |
 | Base | `pacstrap` com `linux-zen` + headers, firmware, `amd-ucode` |
 | Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
@@ -51,24 +51,35 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 O script instala microcode da Intel **e** da AMD. O errado é ignorado no boot, então o mesmo
 pendrive serve pras duas plataformas.
 
-## Partições preservadas
+## Duas partições
 
-**Rótulo é sagrado, posição não importa.** O instalador apaga tudo no disco escolhido **menos**
-as partições cujo rótulo (de sistema de arquivos ou de partição GPT) esteja em `KEEP_LABELS`:
+O disco tem **duas partições e mais nada** (a ESP não conta: 1 GiB, sem letra, invisível):
+
+| | Rótulo | Tamanho | Sistema de arquivos | Montagem | Papel |
+|:--|:--|:--|:--|:--|:--|
+| sistema | `ROOT` | **100 GiB** (`ROOT_MAX_GB`) | ext4 | `/` | descartável: some a cada reinstalação |
+| dados | `Files` | todo o resto | ext4 | **`/home`** | sagrada: **nunca formatada** se já existir |
+
+**Rótulo é sagrado, posição não importa.** O instalador apaga tudo no disco **menos** as partições
+cujo rótulo (de sistema de arquivos ou de partição GPT) esteja em `KEEP_LABELS`:
 
 ```bash
-KEEP_LABELS="Files Alexandre HOME"     # padrão ("Alexandre" e o nome antigo, mantido por segurança)
+KEEP_LABELS="Files Alexandre HOME"     # "Alexandre" e "HOME" são nomes antigos, mantidos por segurança
 ```
 
-| Rótulo | O que é | Papel |
-|:--|:--|:--|
-| `HOME` | ext4, montada em `/home` | Tudo do usuário: `~/.config`, `~/.claude`, `~/.dotfiles`, projetos, biblioteca da Steam. **Nunca é formatada** se já existir |
-| `Files` | NTFS, montada em `/mnt/dados` | Área compartilhada com o Windows — e com a VM dele, que pode receber esta partição como bloco e enxergar o mesmo disco de sempre |
-
 Isso é o que torna o sistema descartável de verdade: a root é a única coisa que se perde ao
-reinstalar, e ela não guarda nada seu. **É o mesmo contrato do
-[MyWinISO](https://github.com/eualexandrerrr/MyWinISO)** — os dois instaladores protegem os mesmos
-rótulos, então dá para reinstalar Arch ou Windows em qualquer ordem sem que um estrague o outro.
+reinstalar, e ela não guarda nada seu — `~/.config`, `~/.claude`, `~/.dotfiles`, projetos,
+biblioteca da Steam e imagem de VM ficam do lado de fora. **É o mesmo contrato do
+[MyWinISO](https://github.com/eualexandrerrr/MyWinISO)**, que protege os mesmos rótulos.
+
+### Por que ext4 e não NTFS na partição de dados
+
+Ela é o `/home`. NTFS não serve de `/home`: o `ntfs3` do kernel não cria symlink POSIX, não guarda
+dono nem bit de execução. Os `dotfiles` fazem `ln -sfn` de tudo e morreriam na primeira linha, e
+todo repositório git apareceria com os arquivos modificados. Não é "pior", é quebrado.
+
+Uma partição de dados NTFS **legada** continua sendo reconhecida e preservada, mas vai para
+`/mnt/dados` como área compartilhada — não vira `/home`, e o instalador avisa por quê.
 
 Com `/home` preservada o usuário é recriado com o **mesmo UID e GID de antes**, lidos da própria
 pasta: dono no ext4 é um número, não um nome, e UID diferente deixaria o home inteiro parecendo de
@@ -326,6 +337,18 @@ ESP_SIZE="1GiB"
   de junções de `%APPDATA%` para outro disco, com tarefa agendada consertando o que estava em
   uso. No Linux nada disso é preciso: `/home` numa partição que o instalador não formata
   resolve o mesmo problema sem nenhuma peça móvel.
+- **Duas partições, e a de dados é ext4** (09/2026) — decisão do dono. O Windows passa a viver
+  só em VM com passthrough, e VM não lê partição: recebe pasta compartilhada e vê letra de
+  unidade. Sem ninguém precisando ler o disco pelo Windows, não há mais motivo para o NTFS
+  atrapalhar o `/home`.
+- **`-m 0` na partição de dados** — a reserva de 5% do ext4 existe para o root ainda conseguir
+  logar num disco cheio; isso só faz sentido na raiz do sistema. Em 690 GiB de dados seriam
+  34 GiB parados sem servir a nada. Na root fica 1%, que já cumpre o papel em 100 GiB.
+- **`fast_commit` nas duas** — encurta o caminho do `fsync`, que é o que mais aparece em imagem
+  de VM, banco e compilação.
+- **`lazy_itable_init=0` no `mkfs`** — escreve as tabelas na hora, em vez de deixar uma thread
+  terminando em segundo plano nas primeiras horas de uso. Custa segundos na instalação e evita
+  lentidão inexplicada logo depois dela.
 - **`ntfs3` e não `ntfs-3g`** — o `ntfs3` é driver de kernel desde a 5.15; o `ntfs-3g` roda em
   espaço de usuário pelo FUSE e é bem mais lento. O pacote `ntfs-3g` continua instalado pelas
   ferramentas (`mkntfs`, `ntfsfix`), não pela montagem.

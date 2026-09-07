@@ -18,24 +18,24 @@ AUTO="${AUTO:-0}"
 # levar os dados junto. O MyWinISO protege os mesmos rotulos: os dois instaladores
 # compartilham este contrato, e por isso da pra reinstalar Arch ou Windows em qualquer
 # ordem sem que um estrague o outro.
-#   Files     = area NTFS, compartilhada com o Windows (e com a VM dele)
-#   Alexandre = nome antigo da mesma area, mantido por seguranca ate nao existir mais disco com ele
-#   HOME      = /home em ext4, o que sobrevive a formatar o sistema
+#   Files     = a particao de dados, ext4, montada em /home
+#   Alexandre = nome antigo dela, e HOME o rotulo de quando /home e dados eram separadas.
+#               Os dois ficam na lista por seguranca: disco que ainda os tenha continua protegido.
 KEEP_LABELS="${KEEP_LABELS:-Files Alexandre HOME}"
 # WIPE_ALL=1 ignora a protecao e apaga o disco inteiro. Existe para disco novo e para
 # quando o dono realmente quer comecar do zero; nunca e o padrao, e o modo automatico
 # se recusa a usar.
 WIPE_ALL="${WIPE_ALL:-0}"
-HOME_LABEL="HOME"
-HOME_MIN_GB=32          # espaco livre minimo para valer a pena criar uma /home separada
+DADOS_MIN_GB=32         # espaco livre minimo para valer a pena uma particao de dados propria
 ROOT_MIN_GB=24          # abaixo disso nao cabe sistema + KDE + margem
-# Teto da root. Sistema, pacotes e cache do pacman cabem folgados em 120 GiB; o que passar
-# disso e melhor aproveitado na /home, que e a parte que sobrevive a formatar. Num disco
-# em que sobre menos que ROOT_MIN_GB + HOME_MIN_GB, a root leva o bloco inteiro e a /home
-# fica dentro dela -- o comportamento antigo.
-ROOT_MAX_GB="${ROOT_MAX_GB:-120}"
+# Teto da root: 100 GiB, decisao do dono. Sistema, pacotes e cache do pacman cabem folgados
+# nisso; o que passar e melhor aproveitado na particao de dados, que e a que sobrevive a
+# formatar. Num disco em que sobre menos que ROOT_MIN_GB + DADOS_MIN_GB, a root leva o bloco
+# inteiro e /home fica dentro dela.
+ROOT_MAX_GB="${ROOT_MAX_GB:-100}"
 DADOS_LABEL="Files"
-DADOS_MOUNT="/mnt/dados"
+DADOS_MOUNT="/home"     # ext4. Uma area NTFS legada, que o Linux nao pode usar de /home, vai para /mnt/dados
+DADOS_MOUNT_NTFS="/mnt/dados"
 
 CONF_LABEL="${CONF_LABEL:-Ventoy}"
 CONF_FILE="myarch/myarch.conf"
@@ -428,7 +428,7 @@ partition_disk() {
     swapoff --all 2>/dev/null || true
     umount -R /mnt 2>/dev/null || true
 
-    HOME_DEV=""; HOME_NOVA=0; DADOS_DEV=""
+    DADOS_DEV=""; DADOS_NOVA=0; DADOS_FS=""
 
     if [[ -z $PROTEGIDAS ]]; then
         # Disco sem nada a preservar: caminho de sempre, GPT do zero.
@@ -453,8 +453,8 @@ partition_disk() {
             [[ -n $num ]] || continue
             if (( protegida )); then
                 sub "mantendo $NAME (particao $num, rotulo ${LABEL:-$PARTLABEL})"
-                [[ $LABEL == "$HOME_LABEL"  || $PARTLABEL == "$HOME_LABEL"  ]] && HOME_DEV="$NAME"
-                [[ $LABEL == "$DADOS_LABEL" || $PARTLABEL == "$DADOS_LABEL" ]] && DADOS_DEV="$NAME"
+                # a primeira protegida que aparecer e a area de dados; com duas particoes so ha uma
+                [[ -z $DADOS_DEV ]] && DADOS_DEV="$NAME"
             else
                 sub "apagando $NAME (particao $num${LABEL:+, rotulo $LABEL})"
                 wipefs -af "$NAME" >/dev/null 2>&1 || true
@@ -483,9 +483,9 @@ $(espacos_livres | awk '{printf "       %.1f GiB (setores %s a %s)\n", $3*512/10
     root_fim=$fim
     if (( (fim - esp_fim) * 512 > ROOT_MAX_GB * 1024 * 1024 * 1024 )); then
         sobra=$(( fim - (esp_fim + ROOT_MAX_GB * 1024 * 1024 * 1024 / 512) ))
-        if (( sobra * 512 >= HOME_MIN_GB * 1024 * 1024 * 1024 )); then
+        if (( sobra * 512 >= DADOS_MIN_GB * 1024 * 1024 * 1024 )); then
             root_fim=$(( esp_fim + ROOT_MAX_GB * 1024 * 1024 * 1024 / 512 ))
-            sub "root limitada a ${ROOT_MAX_GB} GiB; o resto do bloco fica para a /home"
+            sub "root limitada a ${ROOT_MAX_GB} GiB; o resto do bloco fica para a particao de dados"
         fi
     fi
 
@@ -505,43 +505,31 @@ $(espacos_livres | awk '{printf "       %.1f GiB (setores %s a %s)\n", $3*512/10
     [[ -b ${ROOT:-} ]] || die "nao achei a particao ROOT recem-criada em $DISK"
     ok "ESP $ESP_SIZE em $ESP; root em $ROOT ($(lsblk -dno SIZE "$ROOT"))"
 
-    # /home propria: e ela que faz o sistema ser descartavel. Se ja existe uma com o
-    # rotulo HOME, ela e reaproveitada INTACTA -- e o ponto inteiro deste instalador.
-    if [[ -n $HOME_DEV ]]; then
-        ok "/home preservada em $HOME_DEV ($(lsblk -dno SIZE "$HOME_DEV")); nao sera formatada"
+    # A particao de dados e a razao de tudo isto: e ela que faz o sistema ser descartavel.
+    # Se ja existe uma com rotulo protegido, e reaproveitada INTACTA e nunca formatada.
+    if [[ -n $DADOS_DEV ]]; then
+        DADOS_FS="$(lsblk -no FSTYPE "$DADOS_DEV" 2>/dev/null | head -1)"
+        ok "dados preservados em $DADOS_DEV ($(lsblk -dno SIZE "$DADOS_DEV"), ${DADOS_FS:-sem sistema de arquivos}); nao sera formatada"
     else
-        local hini hfim hn dados_ini=0
-        read -r hini hfim hn < <(maior_livre "$HOME_MIN_GB" || true)
-        # INVARIANTE COMPARTILHADO COM O MyWinISO: a HOME tem de ficar DEPOIS da area de dados.
-        # O instalador do Windows protege "do offset de DADOS em diante" -- ele nao consegue ler ext4
-        # nem os rotulos do Linux, entao e por posicao que ele sabe o que preservar. Uma HOME criada
-        # ANTES da DADOS cairia na regiao que ele recria, e seria apagada na proxima instalacao do
-        # Windows. Melhor nao ter /home separada do que ter uma que some sem aviso.
-        if [[ -n ${DADOS_DEV:-} ]]; then
-            dados_ini="$(setor_inicial "$DADOS_DEV")"
-            if [[ -n ${hini:-} ]] && (( hini < dados_ini )); then
-                warn "o unico espaco livre para a /home fica ANTES de $DADOS_DEV ($DADOS_LABEL), e o instalador do Windows apagaria essa area na proxima formatacao. /home fica dentro da root."
-                hini=""
-            fi
-        fi
-        if [[ -n ${hini:-} ]]; then
-            sgdisk -n "0:${hini}:${hfim}" -t 0:8300 -c 0:"$HOME_LABEL" "$DISK" >/dev/null
+        local dini dfim dn
+        read -r dini dfim dn < <(maior_livre "$DADOS_MIN_GB" || true)
+        if [[ -n ${dini:-} ]]; then
+            sgdisk -n "0:${dini}:${dfim}" -t 0:8300 -c 0:"$DADOS_LABEL" "$DISK" >/dev/null
             reler_particoes "$DISK"
             sleep 2
-            HOME_DEV="$(por_partlabel "$HOME_LABEL")" || true
-            if [[ -b ${HOME_DEV:-} ]]; then
-                HOME_NOVA=1
-                ok "/home nova em $HOME_DEV ($(lsblk -dno SIZE "$HOME_DEV")); da proxima formatacao em diante ela sobrevive"
+            DADOS_DEV="$(por_partlabel "$DADOS_LABEL")" || true
+            if [[ -b ${DADOS_DEV:-} ]]; then
+                DADOS_NOVA=1; DADOS_FS="ext4"
+                ok "dados em $DADOS_DEV ($(lsblk -dno SIZE "$DADOS_DEV")); da proxima formatacao em diante ela sobrevive"
             else
-                warn "criei a particao $HOME_LABEL mas nao achei o device; /home fica dentro da root"
-                HOME_DEV=""
+                warn "criei a particao $DADOS_LABEL mas nao achei o device; /home fica dentro da root"
+                DADOS_DEV=""
             fi
         else
-            sub "sem espaco livre de ${HOME_MIN_GB} GiB para uma /home separada; ela fica dentro da root"
+            sub "sem espaco livre de ${DADOS_MIN_GB} GiB para uma particao de dados; /home fica dentro da root"
         fi
     fi
 
-    [[ -n $DADOS_DEV ]] && ok "area de dados preservada em $DADOS_DEV ($(lsblk -dno SIZE "$DADOS_DEV")), sera montada em $DADOS_MOUNT"
     printf '\n'; sgdisk -p "$DISK" | tail -n +6
 }
 
@@ -549,13 +537,23 @@ make_filesystems() {
     log "formatando"
     mkfs.fat -F32 -n EFI "$ESP"
     # ext4 por decisao do dono (05/09/2026): menos overhead que btrfs, sem snapshot.
-    mkfs.ext4 -F -L ROOT "$ROOT"
-    ok "ESP em FAT32, root em ext4"
-    if (( HOME_NOVA )); then
-        mkfs.ext4 -F -L "$HOME_LABEL" "$HOME_DEV"
-        ok "/home nova formatada em ext4"
-    elif [[ -n $HOME_DEV ]]; then
-        ok "/home em $HOME_DEV NAO foi formatada (preservada, com seus dados)"
+    # As opcoes, todas medidas em ganho e nao em fe:
+    #   -m 1   reserva 1% em vez dos 5% padrao. Os 5% existem para o root ainda conseguir logar
+    #          num disco cheio; em 100 GiB isso e 5 GiB parados, e 1 GiB ja cumpre o papel.
+    #   -O fast_commit  reduz o caminho do fsync (kernel 5.10+). E o que mais pesa em imagem de
+    #          VM, banco e compilacao -- cargas que chamam fsync o tempo todo.
+    #   -E lazy_itable_init=0,lazy_journal_init=0  escreve as tabelas agora, no mkfs, em vez de
+    #          deixar uma thread terminando em segundo plano nas primeiras horas de uso. Custa
+    #          alguns segundos aqui e evita lentidao inexplicada logo depois de instalar.
+    mkfs.ext4 -F -L ROOT -m 1 -O fast_commit -E lazy_itable_init=0,lazy_journal_init=0 "$ROOT"
+    ok "ESP em FAT32, root em ext4 (fast_commit, 1% reservado)"
+    if (( DADOS_NOVA )); then
+        # -m 0 na particao de dados: reserva de root nao serve para nada fora da raiz do sistema,
+        # e 5% de 690 GiB seriam 34 GiB jogados fora.
+        mkfs.ext4 -F -L "$DADOS_LABEL" -m 0 -O fast_commit -E lazy_itable_init=0,lazy_journal_init=0 "$DADOS_DEV"
+        ok "dados em ext4 (fast_commit, sem reserva: 5% de reserva seriam dezenas de GiB parados)"
+    elif [[ -n $DADOS_DEV ]]; then
+        ok "$DADOS_DEV NAO foi formatada (preservada, com seus dados)"
     fi
 }
 
@@ -564,9 +562,21 @@ mount_filesystems() {
     mount -o noatime "$ROOT" /mnt
     mkdir -p /mnt/boot
     mount -o fmask=0077,dmask=0077 "$ESP" /mnt/boot
-    if [[ -n $HOME_DEV ]]; then
-        mkdir -p /mnt/home
-        mount -o noatime "$HOME_DEV" /mnt/home
+    # A particao de dados e a /home. So quando ela e ext4: NTFS nao guarda dono, nem bit de
+    # execucao, nem symlink -- os dotfiles fazem symlink de tudo e morreriam na primeira linha.
+    # Uma area NTFS legada continua util, mas como area compartilhada em /mnt/dados, nao como home.
+    if [[ -n $DADOS_DEV ]]; then
+        case "$DADOS_FS" in
+            ext4|ext3|xfs|btrfs|"")
+                mkdir -p /mnt/home
+                mount -o noatime "$DADOS_DEV" /mnt/home
+                ;;
+            ntfs|ntfs3)
+                warn "$DADOS_DEV e NTFS: nao serve de /home (sem dono, sem symlink, sem bit de execucao)."
+                warn "  /home fica dentro da root e a area vai para $DADOS_MOUNT_NTFS. Para virar /home, ela precisa ser ext4."
+                ;;
+            *)  warn "$DADOS_DEV tem sistema de arquivos '$DADOS_FS', que eu nao sei usar de /home; fica de fora" ;;
+        esac
     fi
     ok "arvore montada em /mnt"
     findmnt -R /mnt -o TARGET,SOURCE,FSTYPE
@@ -819,28 +829,27 @@ CHROOT
 }
 
 fstab_dados() {
-    # A area NTFS nao e montada durante a instalacao (nao precisa, e montar NTFS sujo do
-    # live so cria chance de erro): entra no fstab e o sistema instalado monta no boot.
+    # A /home ext4 ja entrou no fstab pelo genfstab, porque estava montada. O que sobra aqui e a
+    # area NTFS legada, que nao e montada durante a instalacao (montar NTFS sujo do live so cria
+    # chance de erro): entra no fstab e o sistema instalado monta no boot.
     [[ -n ${DADOS_DEV:-} ]] || return 0
-    log "area de dados no fstab"
+    case "$DADOS_FS" in ntfs|ntfs3) ;; *) return 0 ;; esac
+    log "area NTFS legada no fstab"
     local uuid uid gid
     uuid="$(blkid -s UUID -o value "$DADOS_DEV" 2>/dev/null || true)"
-    [[ -n $uuid ]] || { warn "nao consegui ler o UUID de $DADOS_DEV; monte $DADOS_MOUNT a mao depois"; return 0; }
+    [[ -n $uuid ]] || { warn "nao consegui ler o UUID de $DADOS_DEV; monte $DADOS_MOUNT_NTFS a mao depois"; return 0; }
     uid="$(arch-chroot /mnt id -u "$USERNAME" 2>/dev/null || echo 1000)"
     gid="$(arch-chroot /mnt id -g "$USERNAME" 2>/dev/null || echo 1000)"
-    mkdir -p "/mnt$DADOS_MOUNT"
-    # ntfs3 e o driver do kernel (desde a 5.15), nao o ntfs-3g do FUSE: bem mais rapido e
-    # sem processo em espaco de usuario. uid/gid porque o NTFS nao guarda dono POSIX --
-    # sem eles a area inteira fica de root. nofail para o boot nao parar se o disco sumir.
-    # Se o Windows tiver desligado com Inicio Rapido ou hibernado, o volume vem "sujo" e o
-    # ntfs3 monta somente leitura, de proposito; e isso que o aviso do README trata.
+    mkdir -p "/mnt$DADOS_MOUNT_NTFS"
+    # ntfs3 e o driver do kernel (desde a 5.15), nao o ntfs-3g do FUSE: bem mais rapido e sem
+    # processo em espaco de usuario. uid/gid porque o NTFS nao guarda dono POSIX. prealloc reduz
+    # fragmentacao de arquivo que cresce. nofail para o boot nao parar se o disco sumir.
     cat >> /mnt/etc/fstab <<FSTAB
 
-# $DADOS_LABEL (NTFS): area compartilhada com o Windows -- e com a VM dele, que pode
-# receber esta particao como bloco e enxergar o mesmo D: de sempre. Preservada por rotulo.
-UUID=$uuid  $DADOS_MOUNT  ntfs3  uid=$uid,gid=$gid,umask=022,windows_names,noatime,nofail,x-systemd.device-timeout=5s  0 0
+# $DADOS_LABEL (NTFS legado): area compartilhada. Nao serve de /home -- sem dono, sem symlink.
+UUID=$uuid  $DADOS_MOUNT_NTFS  ntfs3  uid=$uid,gid=$gid,umask=022,windows_names,noatime,prealloc,nofail,x-systemd.device-timeout=5s  0 0
 FSTAB
-    ok "$DADOS_MOUNT no fstab (ntfs3, dono $uid:$gid, nofail)"
+    ok "$DADOS_MOUNT_NTFS no fstab (ntfs3, dono $uid:$gid, prealloc, nofail)"
 }
 
 stage_dotfiles() {
