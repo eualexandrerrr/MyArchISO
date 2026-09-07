@@ -37,6 +37,33 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 | NVIDIA | Já grava `nvidia_drm.modeset=1`, `nvidia_drm.fbdev=1`, `NVreg_PreserveVideoMemoryAllocations=1` e `NVreg_UsePageAttributeTable=1` |
 | Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
 
+## A máquina
+
+O instalador é genérico, mas foi escrito e testado neste PC. Vale como referência do que
+ele espera encontrar.
+
+| Peça | Modelo |
+|:--|:--|
+| CPU | AMD Ryzen 7 5700X, 8c/16t, AM4, **sem vídeo integrado** |
+| Placa-mãe | ASUS TUF Gaming B550M-PLUS (mATX, B550) — x16 Gen4 pela CPU, x16 Gen3 (em x4) pelo chipset, 2 M.2, LAN 2.5G |
+| RAM | 32 GB DDR4 dual channel (4 slots, até 128 GB) |
+| GPU do host | PCYes Radeon RX 550 4GB — `amdgpu`, é ela que desenha o KDE |
+| GPU da VM | Gainward RTX 3090 24GB — presa no `vfio-pci`, passada pra VM Windows |
+| SSD | Corsair MP700 ELITE 932 GB NVMe Gen4 |
+| Fonte | 850 W 80 Plus Gold |
+| Gabinete | PCYes Forcefield Mini Black Vulcan (mini tower, GPU até 310 mm) |
+| Monitores | ASUS XG27ACS 2560x1440@180Hz (paisagem) + LG UltraGear 2560x1440 (em pé) |
+
+**Duas GPUs de propósito.** O client do RedM não passa pelo anticheat em Wine, então o jogo
+roda numa VM Windows com GPU real. Uma GPU passada por `vfio` some do host — por isso a
+RX 550: é ela que mantém o Linux com tela enquanto a 3090 fica dedicada à VM. A 3090 tem
+cooler de 2,7 slots e tampa o slot de baixo fisicamente, então a RX 550 sai por um riser
+PCIe 3.0 x16 de 20 cm com plugue de 90°.
+
+O `configure_nvidia()` do [dotfiles](https://github.com/eualexandrerrr/dotfiles) e o
+`kernel-nvidia` do `packages.txt` valem enquanto a 3090 ainda desenha o host; quando ela
+for pro `vfio-pci`, saem os dois e entra o bind por ID (`10de:2204,10de:1aef`).
+
 ## Requisitos
 
 | Item | Exigência | Por quê |
