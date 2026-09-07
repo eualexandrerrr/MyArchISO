@@ -21,7 +21,7 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 |:--|:--|
 | Checagem | Exige root, boot em UEFI e rede ativa |
 | Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
-| **Partições preservadas** | Rótulos de `KEEP_LABELS` (`Alexandre` e `HOME`) **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Partições preservadas](#partições-preservadas) |
+| **Partições preservadas** | Rótulos de `KEEP_LABELS` (`Files` e `HOME`) **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Partições preservadas](#partições-preservadas) |
 | Particionamento | GPT: ESP 1 GiB FAT32 + root no primeiro espaço livre que couber, com teto de `ROOT_MAX_GB` (tipo da root pelo GUID da Discoverable Partition Spec) |
 | `/home` separada | Partição própria com rótulo `HOME`: criada no espaço que sobrar, **reaproveitada intacta** se já existir. É ela que faz reinstalar o sistema não custar nada |
 | Área de dados | Partição NTFS rotulada `Alexandre` entra no `fstab` em `/mnt/dados` pelo driver `ntfs3` do kernel, com dono do usuário |
@@ -57,13 +57,13 @@ pendrive serve pras duas plataformas.
 as partições cujo rótulo (de sistema de arquivos ou de partição GPT) esteja em `KEEP_LABELS`:
 
 ```bash
-KEEP_LABELS="Alexandre HOME"     # padrão
+KEEP_LABELS="Files Alexandre HOME"     # padrão ("Alexandre" e o nome antigo, mantido por segurança)
 ```
 
 | Rótulo | O que é | Papel |
 |:--|:--|:--|
 | `HOME` | ext4, montada em `/home` | Tudo do usuário: `~/.config`, `~/.claude`, `~/.dotfiles`, projetos, biblioteca da Steam. **Nunca é formatada** se já existir |
-| `Alexandre` | NTFS, montada em `/mnt/dados` | Área compartilhada com o Windows — e com a VM dele, que pode receber esta partição como bloco e enxergar o mesmo disco de sempre |
+| `Files` | NTFS, montada em `/mnt/dados` | Área compartilhada com o Windows — e com a VM dele, que pode receber esta partição como bloco e enxergar o mesmo disco de sempre |
 
 Isso é o que torna o sistema descartável de verdade: a root é a única coisa que se perde ao
 reinstalar, e ela não guarda nada seu. **É o mesmo contrato do
@@ -96,7 +96,7 @@ Antes de bootar o pendrive:
 1. **Tire o que só existe naquele disco e fora das partições protegidas.** Repositório sem push,
    pasta que não está em backup, chave de SSH, arquivo de configuração de aplicativo. Vale rodar
    `git status` em cada projeto — trabalho não commitado não vai pro GitHub sozinho. O que estiver
-   na `HOME` ou na `Alexandre` fica; o resto do disco, não.
+   na `HOME` ou na `Files` fica; o resto do disco, não.
 2. **Se havia Windows com BitLocker, salve a chave de recuperação primeiro.** Desligar o
    Secure Boot muda o que o TPM mede, e o Windows pode exigir os 48 dígitos no boot seguinte.
    Isso importa mesmo se o plano é apagar o Windows: se algo der errado no meio, você quer

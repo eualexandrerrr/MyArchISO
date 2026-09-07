@@ -18,9 +18,10 @@ AUTO="${AUTO:-0}"
 # levar os dados junto. O MyWinISO protege os mesmos rotulos: os dois instaladores
 # compartilham este contrato, e por isso da pra reinstalar Arch ou Windows em qualquer
 # ordem sem que um estrague o outro.
-#   Alexandre = area NTFS, compartilhada com o Windows (e com a VM dele)
+#   Files     = area NTFS, compartilhada com o Windows (e com a VM dele)
+#   Alexandre = nome antigo da mesma area, mantido por seguranca ate nao existir mais disco com ele
 #   HOME      = /home em ext4, o que sobrevive a formatar o sistema
-KEEP_LABELS="${KEEP_LABELS:-Alexandre HOME}"
+KEEP_LABELS="${KEEP_LABELS:-Files Alexandre HOME}"
 # WIPE_ALL=1 ignora a protecao e apaga o disco inteiro. Existe para disco novo e para
 # quando o dono realmente quer comecar do zero; nunca e o padrao, e o modo automatico
 # se recusa a usar.
@@ -33,7 +34,7 @@ ROOT_MIN_GB=24          # abaixo disso nao cabe sistema + KDE + margem
 # em que sobre menos que ROOT_MIN_GB + HOME_MIN_GB, a root leva o bloco inteiro e a /home
 # fica dentro dela -- o comportamento antigo.
 ROOT_MAX_GB="${ROOT_MAX_GB:-120}"
-DADOS_LABEL="Alexandre"
+DADOS_LABEL="Files"
 DADOS_MOUNT="/mnt/dados"
 
 CONF_LABEL="${CONF_LABEL:-Ventoy}"
