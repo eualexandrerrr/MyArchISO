@@ -47,7 +47,13 @@ KEYMAP="br-abnt2"
 X11_KEYMAP="br"
 ESP_SIZE="1GiB"
 FILESYSTEM="ext4"
-KERNEL_PARAMS=(nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 nvidia.NVreg_UsePageAttributeTable=1 amd_pstate=active transparent_hugepage=always rw quiet)
+# amd_iommu=on e iommu=pt preparam a maquina para o passthrough de GPU desde o primeiro boot: sem
+# IOMMU ligado nao ha vfio, e descobrir isso depois custa um reinstalar. O modo pt (passthrough)
+# evita a traducao de DMA para os dispositivos que ficam com o host, entao nao ha custo em liga-lo
+# mesmo antes de existir VM. Em placa sem IOMMU o kernel simplesmente ignora.
+# O que NAO da para deixar pronto aqui e o vfio-pci: ele precisa do ID PCI da GPU que vai para a VM
+# (lspci -nn), e isso so se sabe com a placa no lugar.
+KERNEL_PARAMS=(nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 nvidia.NVreg_UsePageAttributeTable=1 amd_pstate=active transparent_hugepage=always amd_iommu=on iommu=pt rw quiet)
 DOTFILES_REPO="https://github.com/eualexandrerrr/dotfiles"
 
 BASE_PACKAGES=(
