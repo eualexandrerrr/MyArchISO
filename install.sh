@@ -3,7 +3,7 @@
 set -euo pipefail
 
 HOSTNAME_DEFAULT="RRR"
-USERNAME_DEFAULT="alexandre"
+USERNAME_DEFAULT="Alexandre"   # com maiuscula, por escolha do dono -- ver Decisoes no README
 
 # AUTO=1: nao pergunta nada. Disco = maior disco interno que nao e o pendrive;
 # hostname e usuario = padroes acima; senha = PASSWORD_HASH (do ambiente ou de um
@@ -397,12 +397,16 @@ ask_identity() {
         USERNAME="${USERNAME:-$USERNAME_DEFAULT}"
     fi
 
-    if [[ -n $PASSWORD_HASH ]]; then
+    # O hash do pendrive vale SO no modo automatico, que e onde ninguem esta na frente da tela.
+    # Instalando a mao, a senha e sempre perguntada: quem esta instalando quer escolher a senha
+    # DESTA instalacao, nao herdar a que ficou gravada no pendrive numa formatacao anterior.
+    if [[ -n $PASSWORD_HASH && $AUTO == 1 ]]; then
         [[ $PASSWORD_HASH == \$* ]] || die "PASSWORD_HASH nao parece um hash (gere com: openssl passwd -6)"
         USER_PASSWORD=""; ROOT_PASSWORD=""
-        ok "usuario $USERNAME em $HOSTNAME, senha pelo hash (root com a mesma)"
+        ok "usuario $USERNAME em $HOSTNAME, senha pelo hash do pendrive (root com a mesma)"
         return 0
     fi
+    [[ -n $PASSWORD_HASH ]] && sub 'ha um hash no pendrive, mas instalacao a mao pergunta a senha' 
 
     local p1 p2
     while true; do
@@ -652,8 +656,21 @@ fi
 if [ -n "\${GID_ANTIGO:-}" ] && ! getent group "\$GID_ANTIGO" >/dev/null; then
     groupadd -g "\$GID_ANTIGO" "$USERNAME"
 fi
-useradd -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh \
-    \${UID_ANTIGO:+-u "\$UID_ANTIGO"} \${GID_ANTIGO:+-g "\$GID_ANTIGO"} "$USERNAME"
+# Nome com maiuscula: o is_valid_user_name do shadow aceita A-Z, entao "Alexandre" passa. Mas
+# versoes recentes endureceram a checagem e ganharam --badname para afrouxar de volta, e daqui
+# nao da para conferir a versao que a ISO vai ter. Entao tenta o normal e, se ele recusar por
+# causa do nome, repete com --badname -- em vez de a instalacao morrer na etapa 8 de 12 por
+# causa de um A maiusculo.
+if ! useradd -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh \
+        \${UID_ANTIGO:+-u "\$UID_ANTIGO"} \${GID_ANTIGO:+-g "\$GID_ANTIGO"} "$USERNAME" 2>/tmp/useradd.err; then
+    if grep -qiE "invalid|badname|not a valid" /tmp/useradd.err; then
+        printf 'useradd recusou o nome "%s"; repetindo com --badname\n' "$USERNAME"
+        useradd --badname -m -c "${USERNAME^}" -G wheel,audio,video,storage,input -s /bin/zsh \
+            \${UID_ANTIGO:+-u "\$UID_ANTIGO"} \${GID_ANTIGO:+-g "\$GID_ANTIGO"} "$USERNAME"
+    else
+        cat /tmp/useradd.err >&2; exit 1
+    fi
+fi
 if [ -n "\${UID_ANTIGO:-}" ]; then
     printf 'home preservada: usuario %s recriado com UID %s e GID %s\n' "$USERNAME" "\$UID_ANTIGO" "\${GID_ANTIGO:-}"
 fi
@@ -991,8 +1008,8 @@ main() {
     preflight
     prepare_live
     load_conf
-    pick_disk
     ask_identity
+    pick_disk
     partition_disk
     make_filesystems
     mount_filesystems
