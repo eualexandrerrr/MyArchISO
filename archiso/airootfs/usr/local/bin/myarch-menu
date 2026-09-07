@@ -31,7 +31,9 @@ protege_particao() {
 }
 
 versao_embutida() {
-    if [[ -r /root/myarch/VERSAO ]]; then cat /root/myarch/VERSAO
+    # -s e nao -r: um VERSAO vazio (ja aconteceu, por clone raso no CI) faria o aviso sair como
+    # "copia embutida ()", que e pior que nao dizer nada. Vazio cai para a data do arquivo.
+    if [[ -s /root/myarch/VERSAO ]]; then cat /root/myarch/VERSAO
     elif [[ -e $EMBUTIDO ]]; then date -r "$EMBUTIDO" '+%d/%m/%Y'
     else echo 'desconhecida'; fi
 }

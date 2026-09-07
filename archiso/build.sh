@@ -31,11 +31,11 @@ command -v mkarchiso >/dev/null || { echo "instale o pacote archiso: pacman -S a
 # embutida (05/09/2026)" e informacao; "copia embutida" sozinho nao ajuda ninguem a decidir.
 install -Dm755 "$repo/install.sh" "$aqui/airootfs/root/myarch/install.sh"
 install -Dm644 "$repo/README.md"  "$aqui/airootfs/root/myarch/README.md"
-if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
-    git -C "$repo" log -1 --format="%h de %ad" --date=format:"%d/%m/%Y" -- install.sh > "$aqui/airootfs/root/myarch/VERSAO"
-else
-    date "+%d/%m/%Y" > "$aqui/airootfs/root/myarch/VERSAO"
-fi
+# Sem "-- install.sh": o actions/checkout faz clone raso (um commit so), e filtrar por caminho
+# devolve vazio sempre que o commit do build nao tocou nesse arquivo -- o VERSAO saia em branco e o
+# menu mostrava "copia embutida ()". O que interessa e o commit de que a ISO foi gerada.
+git -C "$repo" log -1 --format="%h de %ad" --date=format:"%d/%m/%Y"     > "$aqui/airootfs/root/myarch/VERSAO" 2>/dev/null || true
+[[ -s $aqui/airootfs/root/myarch/VERSAO ]] || date "+%d/%m/%Y" > "$aqui/airootfs/root/myarch/VERSAO"
 
 # Data do ultimo commit deixa a ISO reproduzivel e o nome com a data certa.
 if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
