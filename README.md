@@ -409,6 +409,47 @@ está usando a cópia embutida. Essa cópia é só o plano B: com rede, o menu b
 do `airootfs` estão no git como symlink de verdade: não edite essa pasta pelo Windows sem
 `core.symlinks=true`, senão eles viram arquivo de texto e o live quebra em silêncio.
 
+### Refazer a ISO: `atualizar-iso.ps1`
+
+Do Windows, uma linha faz tudo — dispara o build, espera, baixa, **confere o `sha256`**, copia pro
+pendrive, aponta o `menu_alias` do `ventoy.json` pra ISO nova, remove a antiga e atualiza o
+`install.sh` solto do pendrive:
+
+```powershell
+.\atualizar-iso.ps1 -Pendrive E:
+```
+
+| Forma | O que faz |
+|:--|:--|
+| `.\atualizar-iso.ps1` | dispara o build, espera, baixa e confere. Não toca no pendrive |
+| `.\atualizar-iso.ps1 -Pendrive E:` | o acima, e instala no pendrive |
+| `.\atualizar-iso.ps1 -SemBuild -Pendrive E:` | não dispara nada: pega a última release já publicada |
+| `-Token ghp_...` | token explícito; sem ele usa `$env:GH_TOKEN` ou o `gh auth token` |
+
+Detalhes que o script cuida, e que são fáceis de esquecer fazendo à mão:
+
+- **Se já houver um build rodando, ele acompanha aquele** em vez de empilhar outro — o workflow tem
+  `concurrency` sem `cancel-in-progress`, então disparar duas vezes só cria fila.
+- **Confere o `sha256` antes de gravar** e aborta se não bater.
+- **Só apaga a ISO antiga depois que a nova está no lugar.** Enquanto a antiga estiver no pendrive
+  ela é uma opção a mais no menu do Ventoy — e uma ISO velha carrega um `myarch-menu` velho, que
+  roda o instalador embutido dela em vez de baixar o novo.
+- **Preserva o resto do `ventoy.json`**, incluindo as entradas das outras ISOs e o tema; troca só o
+  `menu_alias` da nossa, mantendo o texto que já estava lá. Mesma regra do `pendrive.ps1` do
+  MyWinISO, porque o `ventoy.json` é do pendrive, não deste repositório.
+- **Grava o `install.sh` do pendrive com LF**, que é o que o bash lê.
+- O token só fala com a API; o download é sem ele (o repositório é público, e mandar o cabeçalho de
+  autorização no redirecionamento para o armazenamento de objetos faz ele recusar).
+
+### Quando vale refazer
+
+Desde que o menu passou a baixar o `install.sh` do GitHub na hora, refazer a ISO virou raro — ela é
+veículo de boot, e o que decide o que acontece com o disco mora no repositório. Vale quando:
+
+- o `myarch-menu`, o perfil `archiso/` ou a lista de pacotes do live mudaram;
+- o live está velho a ponto de o kernel não enxergar hardware novo;
+- você quer instalar **sem rede** — aí a cópia embutida é a única que existe.
+
 Grava do mesmo jeito: copiar o `.iso` pro pendrive do Ventoy.
 
 Pra testar antes de gravar, `archiso/test-qemu.ps1` sobe a ISO num QEMU do Windows (TCG, sem
