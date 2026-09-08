@@ -76,6 +76,62 @@ pega_instalador() {
     return 1
 }
 
+# Reinstala so os dotfiles num sistema que ja existe no disco, sem tocar em particao nenhuma.
+# Existe porque a config do desktop mora em /home, que sobrevive a formatacao: reinstalar o
+# Arch inteiro nao conserta um Hyprland que nao sobe, e a unica saida ate hoje era montar tudo
+# a mao pelo shell. Aqui monta ROOT, poe a particao de dados em /home, faz chroot e roda o
+# install.sh do repo de dotfiles como o dono do /home -- que e quem tem os symlinks do stow.
+reinstalar_dotfiles() {
+    local raiz=/mnt/sys usuario
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    mkdir -p "$raiz"
+    mountpoint -q "$raiz" || mount /dev/disk/by-label/ROOT "$raiz" 2>/dev/null || {
+        printf '  %s!!%s nao achei a particao ROOT\n' "$RED" "$END"
+        read -rp $'\n  [enter] volta ao menu ' _; return
+    }
+    if blkid -L Files &>/dev/null; then
+        mountpoint -q "$raiz/home" || mount /dev/disk/by-label/Files "$raiz/home" 2>/dev/null
+    fi
+    mountpoint -q "$raiz/boot" || mount /dev/disk/by-label/EFI "$raiz/boot" 2>/dev/null
+
+    usuario="$(awk -F: '$3 == 1000 { print $1 }' "$raiz/etc/passwd" 2>/dev/null | head -1)"
+    if [[ -z $usuario ]]; then
+        printf '  %s!!%s nao achei o usuario de uid 1000 em %s/etc/passwd\n' "$RED" "$END" "$raiz"
+        umount -R "$raiz" 2>/dev/null
+        read -rp $'\n  [enter] volta ao menu ' _; return
+    fi
+    printf '  %sok%s sistema montado, usuario %s\n' "$GRN" "$END" "$usuario"
+
+    if ! rede_ok; then
+        printf '  %s!!%s sem internet: os dotfiles vem do GitHub, nao da ISO\n' "$RED" "$END"
+        umount -R "$raiz" 2>/dev/null
+        read -rp $'\n  [enter] volta ao menu ' _; return
+    fi
+
+    printf '  %s--%s apagando ~/.dotfiles e clonando de novo\n' "$BLU" "$END"
+    cp -f /etc/resolv.conf "$raiz/etc/resolv.conf" 2>/dev/null
+    arch-chroot "$raiz" /usr/bin/su - "$usuario" -c '
+        set -e
+        rm -rf "$HOME/.dotfiles"
+        git clone --depth 1 https://github.com/eualexandrerrr/dotfiles.git "$HOME/.dotfiles"
+        bash "$HOME/.dotfiles/install.sh"
+    '
+    local rc=$?
+
+    umount -R "$raiz" 2>/dev/null
+    if [[ $rc -eq 0 ]]; then
+        printf '\n  %sok%s dotfiles reinstalados. Reiniciando em 10 s ([enter] reinicia agora, [esc] cancela)\n' "$GRN" "$END"
+        local tecla
+        if read -rs -t 10 -n 1 tecla; then
+            [[ $tecla == $'\e' ]] && { printf '  reinicio cancelado\n'; read -rp $'\n  [enter] volta ao menu ' _; return; }
+        fi
+        reboot
+    else
+        printf '\n  %s!!%s o install.sh dos dotfiles terminou com erro (codigo %d)\n' "$RED" "$END" "$rc"
+        read -rp $'\n  [enter] volta ao menu ' _
+    fi
+}
+
 instalar() {   # $1 = "auto" ou "perguntando"
     local inst
     inst="$(pega_instalador)" || { read -rp $'\n  [enter] volta ao menu ' _; return; }
@@ -97,9 +153,11 @@ while true; do
     printf '     (a particao de dados e a /home sao preservadas pelo rotulo).\n'
     printf '  %s2%s) Instalar perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
     printf '  %s3%s) Usar a copia embutida na ISO (%s), sem baixar\n' "$BLD" "$END" "$(versao_embutida)"
-    printf '  %s4%s) Shell\n' "$BLD" "$END"
-    printf '  %s5%s) Reiniciar\n' "$BLD" "$END"
-    printf '  %s6%s) Desligar\n\n' "$BLD" "$END"
+    printf '  %s4%s) Reinstalar os dotfiles no sistema ja instalado, sem formatar nada\n' "$BLD" "$END"
+    printf '     (apaga ~/.dotfiles, clona do GitHub, roda o install.sh e reinicia)\n'
+    printf '  %s5%s) Shell\n' "$BLD" "$END"
+    printf '  %s6%s) Reiniciar\n' "$BLD" "$END"
+    printf '  %s7%s) Desligar\n\n' "$BLD" "$END"
     read -rp '  opcao: ' op
     case "$op" in
         1) instalar auto ;;
@@ -112,9 +170,10 @@ while true; do
                printf '  ela apagaria o disco inteiro. Use a opcao 1 ou 2 com rede.\n'
            fi
            read -rp $'\n  [enter] volta ao menu ' _ ;;
-        4) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
-        5) reboot ;;
-        6) poweroff ;;
+        4) reinstalar_dotfiles ;;
+        5) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
+        6) reboot ;;
+        7) poweroff ;;
         *) ;;
     esac
 done

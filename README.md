@@ -307,6 +307,19 @@ antes disso, seu disco está intacto.
 Se travar no meio da instalação, é seguro simplesmente rodar de novo: ele reparticiona do
 zero, não tenta aproveitar estado anterior.
 
+## Se o desktop não subir
+
+A opção **4** do menu do live reinstala só os dotfiles, sem tocar em partição nenhuma: monta a
+ROOT, põe a partição de dados em `/home`, faz `arch-chroot`, apaga `~/.dotfiles`, clona do
+GitHub, roda o `install.sh` do repo de dotfiles como o dono do `/home` e reinicia.
+
+Ela existe porque a configuração do desktop mora em `/home`, que sobrevive à formatação.
+Reinstalar o Arch inteiro não conserta um compositor que não sobe — o `~/.config` volta igual.
+Antes disso a única saída era montar tudo à mão pelo shell.
+
+Precisa de rede: os dotfiles vêm do GitHub, não da ISO. O reinício é automático depois de 10 s,
+com `[esc]` para cancelar.
+
 ## Se um update quebrar
 
 Sem snapshot: o caminho é o pendrive. Bootar o live, montar a root e arrumar de lá
