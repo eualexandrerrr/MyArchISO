@@ -414,6 +414,19 @@ ESP_SIZE="1GiB"
 - Exige boot em UEFI. BIOS legada não é suportada.
 - Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
 
+## O menu também se atualiza sozinho
+
+Pelo mesmo motivo do instalador: a ISO congela o `myarch-menu` do commit em que foi gerada, e
+uma opção nova só chegaria ao pendrive regerando a imagem. Ao abrir, ele baixa a própria versão
+do GitHub, se troca e reexecuta uma vez. `MYARCH_MENU_ATUALIZADO` corta o laço.
+
+Só troca se o arquivo baixado for um bash válido (shebang mais `bash -n`) e diferente do atual.
+Um download pela metade sobrescreveria o menu por lixo e deixaria o live sem interface nenhuma.
+Sem rede, segue com a versão da ISO sem reclamar.
+
+Isso vale só para o menu. O `install.sh` continua com o próprio caminho de download e as
+próprias checagens, descritas abaixo.
+
 ## O instalador vem do GitHub, não da ISO
 
 **As opções 1 e 2 do menu baixam o `install.sh` do GitHub na hora.** A cópia dentro da ISO é o
