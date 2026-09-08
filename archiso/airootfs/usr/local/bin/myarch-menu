@@ -16,9 +16,14 @@ RAW=https://raw.githubusercontent.com/eualexandrerrr/MyArchISO/main/install.sh
 RAW_MENU=https://raw.githubusercontent.com/eualexandrerrr/MyArchISO/main/archiso/airootfs/usr/local/bin/myarch-menu
 EMBUTIDO=/root/myarch/install.sh
 BAIXADO=/root/myarch-novo/install.sh
+DOTFILES=https://github.com/eualexandrerrr/dotfiles.git
+
+# Ponto unico de montagem do sistema do disco. Tudo que conserta alguma coisa passa por aqui.
+RAIZ=/mnt/sys
 
 rede_ok() { ping -c1 -W2 archlinux.org &>/dev/null; }
 conf_ok() { blkid -L Ventoy &>/dev/null; }
+pausa()   { read -rp $'\n  [enter] volta ao menu ' _; }
 
 # O mesmo raciocinio do install.sh, aplicado ao proprio menu: a ISO congela este arquivo no
 # commit em que foi gerada, entao uma opcao nova so chegaria ao pendrive regerando a imagem.
@@ -102,67 +107,322 @@ pega_instalador() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# Montagem do sistema do disco
+#
+# Toda opcao de conserto precisa do mesmo comeco: ROOT em /mnt/sys, a particao de dados
+# em /mnt/sys/home e a ESP em /mnt/sys/boot. Estava duplicado dentro de reinstalar_dotfiles;
+# virou funcao porque agora tem meia duzia de coisas usando.
+#
+# A ordem importa: /home e /boot sao filhos de ROOT, entao ROOT vai primeiro. Sem a ESP
+# montada, bootctl e mkinitcpio geram arquivo no lugar errado e o disco continua sem bootar.
+# ---------------------------------------------------------------------------
+
+montar_sistema() {
+    mkdir -p "$RAIZ"
+    if ! mountpoint -q "$RAIZ"; then
+        mount /dev/disk/by-label/ROOT "$RAIZ" 2>/dev/null || {
+            printf '  %s!!%s nao achei a particao ROOT\n' "$RED" "$END"
+            return 1
+        }
+    fi
+    if blkid -L Files &>/dev/null; then
+        mountpoint -q "$RAIZ/home" || mount /dev/disk/by-label/Files "$RAIZ/home" 2>/dev/null
+    fi
+    mountpoint -q "$RAIZ/boot" || mount /dev/disk/by-label/EFI "$RAIZ/boot" 2>/dev/null
+    # sem resolv.conf o chroot nao resolve nome nenhum, e todo pacman de dentro falha
+    cp -f /etc/resolv.conf "$RAIZ/etc/resolv.conf" 2>/dev/null
+    printf '  %sok%s ROOT em %s' "$GRN" "$END" "$RAIZ"
+    mountpoint -q "$RAIZ/home" && printf ', dados em %s/home' "$RAIZ"
+    mountpoint -q "$RAIZ/boot" && printf ', ESP em %s/boot' "$RAIZ"
+    printf '\n'
+    return 0
+}
+
+desmontar_sistema() {
+    umount -R "$RAIZ" 2>/dev/null
+}
+
+dono_do_sistema() {
+    awk -F: '$3 == 1000 { print $1 }' "$RAIZ/etc/passwd" 2>/dev/null | head -1
+}
+
+# Roda um comando dentro do sistema instalado, montando antes e desmontando depois.
+# Uso: no_sistema 'titulo do que vai fazer' comando...
+no_sistema() {
+    local titulo=$1; shift
+    printf '\n  %s--%s %s\n' "$BLU" "$END" "$titulo"
+    montar_sistema || { pausa; return 1; }
+    arch-chroot "$RAIZ" "$@"
+    local rc=$?
+    desmontar_sistema
+    if [[ $rc -eq 0 ]]; then printf '\n  %sok%s terminou sem erro\n' "$GRN" "$END"
+    else printf '\n  %s!!%s terminou com erro (codigo %d)\n' "$RED" "$END" "$rc"; fi
+    pausa
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
+# Dotfiles
+# ---------------------------------------------------------------------------
+
 # Reinstala so os dotfiles num sistema que ja existe no disco, sem tocar em particao nenhuma.
 # Existe porque a config do desktop mora em /home, que sobrevive a formatacao: reinstalar o
 # Arch inteiro nao conserta um Hyprland que nao sobe, e a unica saida ate hoje era montar tudo
 # a mao pelo shell. Aqui monta ROOT, poe a particao de dados em /home, faz chroot e roda o
 # install.sh do repo de dotfiles como o dono do /home -- que e quem tem os symlinks do stow.
 reinstalar_dotfiles() {
-    local raiz=/mnt/sys usuario
+    local usuario rc
     printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
-    mkdir -p "$raiz"
-    mountpoint -q "$raiz" || mount /dev/disk/by-label/ROOT "$raiz" 2>/dev/null || {
-        printf '  %s!!%s nao achei a particao ROOT\n' "$RED" "$END"
-        read -rp $'\n  [enter] volta ao menu ' _; return
-    }
-    if blkid -L Files &>/dev/null; then
-        mountpoint -q "$raiz/home" || mount /dev/disk/by-label/Files "$raiz/home" 2>/dev/null
-    fi
-    mountpoint -q "$raiz/boot" || mount /dev/disk/by-label/EFI "$raiz/boot" 2>/dev/null
+    montar_sistema || { pausa; return; }
 
-    usuario="$(awk -F: '$3 == 1000 { print $1 }' "$raiz/etc/passwd" 2>/dev/null | head -1)"
+    usuario="$(dono_do_sistema)"
     if [[ -z $usuario ]]; then
-        printf '  %s!!%s nao achei o usuario de uid 1000 em %s/etc/passwd\n' "$RED" "$END" "$raiz"
-        umount -R "$raiz" 2>/dev/null
-        read -rp $'\n  [enter] volta ao menu ' _; return
+        printf '  %s!!%s nao achei o usuario de uid 1000 em %s/etc/passwd\n' "$RED" "$END" "$RAIZ"
+        desmontar_sistema; pausa; return
     fi
-    printf '  %sok%s sistema montado, usuario %s\n' "$GRN" "$END" "$usuario"
+    printf '  %sok%s usuario %s\n' "$GRN" "$END" "$usuario"
 
     if ! rede_ok; then
         printf '  %s!!%s sem internet: os dotfiles vem do GitHub, nao da ISO\n' "$RED" "$END"
-        umount -R "$raiz" 2>/dev/null
-        read -rp $'\n  [enter] volta ao menu ' _; return
+        desmontar_sistema; pausa; return
     fi
 
     printf '  %s--%s apagando ~/.dotfiles e clonando de novo\n' "$BLU" "$END"
-    cp -f /etc/resolv.conf "$raiz/etc/resolv.conf" 2>/dev/null
-    arch-chroot "$raiz" /usr/bin/su - "$usuario" -c '
+    arch-chroot "$RAIZ" /usr/bin/su - "$usuario" -c "
         set -e
-        rm -rf "$HOME/.dotfiles"
-        git clone --depth 1 https://github.com/eualexandrerrr/dotfiles.git "$HOME/.dotfiles"
-        bash "$HOME/.dotfiles/install.sh"
-    '
-    local rc=$?
+        rm -rf \"\$HOME/.dotfiles\"
+        git clone --depth 1 $DOTFILES \"\$HOME/.dotfiles\"
+        bash \"\$HOME/.dotfiles/install.sh\"
+    "
+    rc=$?
 
-    umount -R "$raiz" 2>/dev/null
+    desmontar_sistema
     if [[ $rc -eq 0 ]]; then
         printf '\n  %sok%s dotfiles reinstalados. Reiniciando em 10 s ([enter] reinicia agora, [esc] cancela)\n' "$GRN" "$END"
         local tecla
         if read -rs -t 10 -n 1 tecla; then
-            [[ $tecla == $'\e' ]] && { printf '  reinicio cancelado\n'; read -rp $'\n  [enter] volta ao menu ' _; return; }
+            [[ $tecla == $'\e' ]] && { printf '  reinicio cancelado\n'; pausa; return; }
         fi
         reboot
     else
         printf '\n  %s!!%s o install.sh dos dotfiles terminou com erro (codigo %d)\n' "$RED" "$END" "$rc"
-        read -rp $'\n  [enter] volta ao menu ' _
+        pausa
     fi
+}
+
+# So reaplica a config: nao clona nada, nao instala pacote, nao mexe na rede. E o caminho
+# para quando o repo ja esta no lugar e o que quebrou foi o link ou a config do compositor.
+reaplicar_config() {
+    local usuario
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+
+    usuario="$(dono_do_sistema)"
+    if [[ -z $usuario ]]; then
+        printf '  %s!!%s nao achei o usuario de uid 1000\n' "$RED" "$END"
+        desmontar_sistema; pausa; return
+    fi
+    if [[ ! -d $RAIZ/home/$usuario/.dotfiles ]]; then
+        printf '  %s!!%s %s nao tem ~/.dotfiles. Use a opcao que reclona do GitHub.\n' "$RED" "$END" "$usuario"
+        desmontar_sistema; pausa; return
+    fi
+
+    arch-chroot "$RAIZ" /usr/bin/su - "$usuario" -c 'bash "$HOME/.dotfiles/setup.sh"'
+    local rc=$?
+    desmontar_sistema
+    if [[ $rc -eq 0 ]]; then printf '\n  %sok%s config reaplicada\n' "$GRN" "$END"
+    else printf '\n  %s!!%s setup.sh terminou com erro (codigo %d)\n' "$RED" "$END" "$rc"; fi
+    pausa
+}
+
+# ---------------------------------------------------------------------------
+# Recuperacao
+# ---------------------------------------------------------------------------
+
+abrir_chroot() {
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+    printf '\n  Voce esta DENTRO do sistema do disco. Saia com "exit" para desmontar e voltar.\n\n'
+    arch-chroot "$RAIZ" /bin/bash
+    desmontar_sistema
+    printf '\n  %sok%s desmontado\n' "$GRN" "$END"
+    pausa
+}
+
+# fsck exige a particao desmontada, senao ele recusa ou corrompe. Por isso desmonta tudo antes
+# e trata cada rotulo separado. O codigo 1 do e2fsck quer dizer "corrigi erros", nao falha.
+checar_discos() {
+    local alvo dev rc
+    printf '\n  %s--%s desmontando tudo antes de checar\n' "$BLU" "$END"
+    desmontar_sistema
+    for alvo in ROOT Files; do
+        dev="$(blkid -L "$alvo" 2>/dev/null)"
+        if [[ -z $dev ]]; then
+            printf '  %s!!%s rotulo %s nao existe neste disco\n' "$YEL" "$END" "$alvo"
+            continue
+        fi
+        if findmnt -S "$dev" &>/dev/null; then
+            printf '  %s!!%s %s (%s) ainda esta montada; pulei\n' "$YEL" "$END" "$alvo" "$dev"
+            continue
+        fi
+        printf '\n  %s--%s e2fsck -fp em %s (%s)\n' "$BLU" "$END" "$alvo" "$dev"
+        e2fsck -fp "$dev"; rc=$?
+        case $rc in
+            0) printf '  %sok%s %s sem erros\n' "$GRN" "$END" "$alvo" ;;
+            1) printf '  %sok%s %s tinha erros e foram corrigidos\n' "$GRN" "$END" "$alvo" ;;
+            2) printf '  %s!!%s %s corrigido, mas precisa reiniciar\n' "$YEL" "$END" "$alvo" ;;
+            4) printf '  %s!!%s %s tem erro que o modo automatico nao resolve.\n' "$RED" "$END" "$alvo"
+               printf '     Rode a mao no shell: e2fsck -fy %s\n' "$dev" ;;
+            *) printf '  %s!!%s e2fsck saiu com %d em %s\n' "$RED" "$END" "$rc" "$alvo" ;;
+        esac
+    done
+    pausa
+}
+
+# Disco que nao bota mais o menu do systemd-boot na tela: reescreve o bootloader na ESP
+# e regrava a entrada de NVRAM. Nao mexe em particao, so em arquivo dentro da ESP.
+reinstalar_bootloader() {
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+    if ! mountpoint -q "$RAIZ/boot"; then
+        printf '  %s!!%s a ESP (rotulo EFI) nao montou; sem ela nao da para reinstalar o boot\n' "$RED" "$END"
+        desmontar_sistema; pausa; return
+    fi
+    arch-chroot "$RAIZ" bootctl install
+    arch-chroot "$RAIZ" bootctl update
+    printf '\n  %s--%s entradas que o systemd-boot enxerga agora:\n' "$BLU" "$END"
+    arch-chroot "$RAIZ" bootctl list
+    desmontar_sistema
+    pausa
+}
+
+regerar_initramfs() {
+    no_sistema 'regerando o initramfs de todos os kernels' mkinitcpio -P
+}
+
+# Kernel meio instalado, update interrompido no meio, /usr/lib/modules sem os modulos do
+# kernel que esta no boot: reinstala os pacotes de base sem tocar em mais nada.
+reinstalar_base() {
+    printf '\n  %s--%s isto baixa pacote: precisa de rede\n' "$BLU" "$END"
+    rede_ok || { printf '  %s!!%s sem internet\n' "$RED" "$END"; pausa; return; }
+    no_sistema 'reinstalando linux-zen, firmware e systemd' \
+        pacman -S --noconfirm linux-zen linux-zen-headers linux-firmware systemd
+}
+
+# "invalid or corrupted package (PGP signature)" depois de um tempo sem atualizar: as chaves
+# do keyring venceram. Recria o chaveiro e traz mirror novo.
+consertar_pacman() {
+    printf '\n  %s--%s isto baixa pacote: precisa de rede\n' "$BLU" "$END"
+    rede_ok || { printf '  %s!!%s sem internet\n' "$RED" "$END"; pausa; return; }
+    printf '  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+    arch-chroot "$RAIZ" bash -c '
+        set -x
+        rm -rf /var/lib/pacman/sync
+        pacman-key --init
+        pacman-key --populate archlinux
+        pacman -Sy --noconfirm archlinux-keyring
+    '
+    local rc=$?
+    desmontar_sistema
+    if [[ $rc -eq 0 ]]; then printf '\n  %sok%s keyring refeito\n' "$GRN" "$END"
+    else printf '\n  %s!!%s terminou com erro (codigo %d)\n' "$RED" "$END" "$rc"; fi
+    pausa
+}
+
+trocar_senha() {
+    local usuario alvo
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+    usuario="$(dono_do_sistema)"
+    printf '  usuario de uid 1000: %s\n' "${usuario:-nao achei}"
+    read -rp '  trocar a senha de quem? [enter usa o de cima, ou digite root] ' alvo
+    [[ -z $alvo ]] && alvo="$usuario"
+    if [[ -z $alvo ]]; then
+        printf '  %s!!%s sem usuario para trocar\n' "$RED" "$END"
+        desmontar_sistema; pausa; return
+    fi
+    arch-chroot "$RAIZ" passwd "$alvo"
+    desmontar_sistema
+    pausa
+}
+
+# O journal do sistema instalado fica em /var/log/journal e pode ser lido de fora, sem chroot.
+# -b -1 e o boot anterior: e nele que esta o erro que deixou a maquina neste estado.
+ver_log() {
+    printf '\n  %s--%s montando o sistema instalado\n' "$BLU" "$END"
+    montar_sistema || { pausa; return; }
+    if [[ ! -d $RAIZ/var/log/journal ]]; then
+        printf '  %s!!%s este sistema nao guarda journal em disco\n' "$YEL" "$END"
+        desmontar_sistema; pausa; return
+    fi
+    printf '\n  %s--%s erros do ultimo boot (q sai)\n\n' "$BLU" "$END"
+    journalctl -D "$RAIZ/var/log/journal" -b -1 -p err --no-pager | tail -60
+    printf '\n  %s--%s ultimas 40 linhas do boot inteiro\n\n' "$BLU" "$END"
+    journalctl -D "$RAIZ/var/log/journal" -b -1 --no-pager | tail -40
+    desmontar_sistema
+    pausa
+}
+
+ver_discos() {
+    printf '\n  %s--%s discos, rotulos e tamanho\n\n' "$BLU" "$END"
+    lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS
+    printf '\n  %s--%s rotulos que o myarch usa\n\n' "$BLU" "$END"
+    local alvo dev
+    for alvo in ROOT Files EFI Ventoy; do
+        dev="$(blkid -L "$alvo" 2>/dev/null)"
+        if [[ -n $dev ]]; then printf '  %sok%s %-7s %s\n' "$GRN" "$END" "$alvo" "$dev"
+        else printf '  %s--%s %-7s nao existe\n' "$YEL" "$END" "$alvo"; fi
+    done
+    if montar_sistema; then
+        printf '\n  %s--%s espaco livre\n\n' "$BLU" "$END"
+        df -h "$RAIZ" "$RAIZ/home" "$RAIZ/boot" 2>/dev/null
+        desmontar_sistema
+    fi
+    pausa
+}
+
+menu_recuperar() {
+    local op
+    while true; do
+        clear
+        printf '%s' "$BLU"
+        printf '  %s\n' '=================================' '   R E C U P E R A R   |   myarch' '================================='
+        printf '%s\n' "$END"
+        printf '  Nada aqui formata disco. Tudo monta o sistema em %s e desmonta ao sair.\n\n' "$RAIZ"
+        printf '  %s1%s) Abrir um shell dentro do sistema instalado (chroot)\n' "$BLD" "$END"
+        printf '  %s2%s) Checar e reparar os sistemas de arquivos (e2fsck em ROOT e Files)\n' "$BLD" "$END"
+        printf '  %s3%s) Reinstalar o systemd-boot e regravar as entradas\n' "$BLD" "$END"
+        printf '  %s4%s) Regerar o initramfs (mkinitcpio -P)\n' "$BLD" "$END"
+        printf '  %s5%s) Reinstalar kernel, firmware e systemd\n' "$BLD" "$END"
+        printf '  %s6%s) Consertar o pacman: refazer o keyring e o banco de sync\n' "$BLD" "$END"
+        printf '  %s7%s) Trocar a senha de um usuario\n' "$BLD" "$END"
+        printf '  %s8%s) Ver o log do ultimo boot que falhou\n' "$BLD" "$END"
+        printf '  %s9%s) Discos, rotulos e espaco livre\n' "$BLD" "$END"
+        printf '  %s0%s) Voltar\n\n' "$BLD" "$END"
+        read -rp '  opcao: ' op
+        case "$op" in
+            1) abrir_chroot ;;
+            2) checar_discos ;;
+            3) reinstalar_bootloader ;;
+            4) regerar_initramfs ;;
+            5) reinstalar_base ;;
+            6) consertar_pacman ;;
+            7) trocar_senha ;;
+            8) ver_log ;;
+            9) ver_discos ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
 }
 
 instalar() {   # $1 = "auto" ou "perguntando"
     local inst
-    inst="$(pega_instalador)" || { read -rp $'\n  [enter] volta ao menu ' _; return; }
+    inst="$(pega_instalador)" || { pausa; return; }
     if [[ $1 == auto ]]; then AUTO=1 bash "$inst"; else bash "$inst"; fi
-    read -rp $'\n  [enter] volta ao menu ' _
+    pausa
 }
 
 while true; do
@@ -173,17 +433,22 @@ while true; do
     if rede_ok; then printf '  rede: %sok%s (o instalador vem do GitHub na hora)\n' "$GRN" "$END"
     else printf '  rede: %ssem internet%s -- o instalador cai para a copia da ISO (%s)\n' "$YEL" "$END" "$(versao_embutida)"; fi
     if conf_ok; then printf '  pendrive Ventoy: %sachado%s (le myarch/myarch.conf se existir)\n' "$GRN" "$END"; else printf '  pendrive Ventoy: nao achado (a senha vai ser perguntada)\n'; fi
+    if blkid -L ROOT &>/dev/null; then printf '  sistema no disco: %sachado%s (da para consertar sem formatar)\n' "$GRN" "$END"
+    else printf '  sistema no disco: nao achei o rotulo ROOT\n'; fi
     printf '  teclado: br-abnt2   fuso: America/Sao_Paulo\n\n'
-    printf '  %s1%s) Instalar AUTOMATICO: maior disco interno, hostname RRR, usuario alexandre,\n' "$BLD" "$END"
+    printf '  %sINSTALAR%s\n' "$BLD" "$END"
+    printf '  %s1%s) AUTOMATICO: maior disco interno, hostname RRR, usuario alexandre,\n' "$BLD" "$END"
     printf '     senha do pendrive, dotfiles no primeiro boot. %sAPAGA o disco%s apos 10 s de aviso\n' "$RED" "$END"
     printf '     (a particao de dados e a /home sao preservadas pelo rotulo).\n'
-    printf '  %s2%s) Instalar perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
-    printf '  %s3%s) Usar a copia embutida na ISO (%s), sem baixar\n' "$BLD" "$END" "$(versao_embutida)"
-    printf '  %s4%s) Reinstalar os dotfiles no sistema ja instalado, sem formatar nada\n' "$BLD" "$END"
-    printf '     (apaga ~/.dotfiles, clona do GitHub, roda o install.sh e reinicia)\n'
-    printf '  %s5%s) Shell\n' "$BLD" "$END"
-    printf '  %s6%s) Reiniciar\n' "$BLD" "$END"
-    printf '  %s7%s) Desligar\n\n' "$BLD" "$END"
+    printf '  %s2%s) Perguntando disco, hostname, usuario e senhas\n' "$BLD" "$END"
+    printf '  %s3%s) Usar a copia embutida na ISO (%s), sem baixar\n\n' "$BLD" "$END" "$(versao_embutida)"
+    printf '  %sSEM FORMATAR NADA%s\n' "$BLD" "$END"
+    printf '  %s4%s) Rebaixar os dotfiles: apaga ~/.dotfiles, clona do GitHub, roda o install.sh\n' "$BLD" "$END"
+    printf '  %s5%s) So reaplicar a config (setup.sh), sem clonar nem instalar pacote\n' "$BLD" "$END"
+    printf '  %s6%s) Recuperar / consertar o sistema instalado %s>%s\n\n' "$BLD" "$END" "$BLD" "$END"
+    printf '  %s7%s) Shell\n' "$BLD" "$END"
+    printf '  %s8%s) Reiniciar\n' "$BLD" "$END"
+    printf '  %s9%s) Desligar\n\n' "$BLD" "$END"
     read -rp '  opcao: ' op
     case "$op" in
         1) instalar auto ;;
@@ -195,11 +460,13 @@ while true; do
                printf '\n  %sPAREI.%s A copia embutida nesta ISO (%s) nao preserva particao por rotulo:\n' "$RED" "$END" "$(versao_embutida)"
                printf '  ela apagaria o disco inteiro. Use a opcao 1 ou 2 com rede.\n'
            fi
-           read -rp $'\n  [enter] volta ao menu ' _ ;;
+           pausa ;;
         4) reinstalar_dotfiles ;;
-        5) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
-        6) reboot ;;
-        7) poweroff ;;
+        5) reaplicar_config ;;
+        6) menu_recuperar ;;
+        7) printf '\n  digite myarch-menu para voltar\n\n'; exit 0 ;;
+        8) reboot ;;
+        9) poweroff ;;
         *) ;;
     esac
 done

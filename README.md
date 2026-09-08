@@ -320,6 +320,35 @@ Antes disso a única saída era montar tudo à mão pelo shell.
 Precisa de rede: os dotfiles vêm do GitHub, não da ISO. O reinício é automático depois de 10 s,
 com `[esc]` para cancelar.
 
+
+## Consertar sem formatar
+
+A opção **6** abre um submenu só de recuperação. Nada ali formata disco: tudo monta a ROOT em
+`/mnt/sys`, põe a partição de dados em `/mnt/sys/home` e a ESP em `/mnt/sys/boot`, faz o que
+foi pedido e desmonta ao sair. A ordem de montagem importa — sem a ESP montada, `bootctl` e
+`mkinitcpio` escrevem no lugar errado e o disco continua sem bootar.
+
+| Opção | Para quando | O que faz |
+|:--|:--|:--|
+| 1 | qualquer coisa que precise da mão | `arch-chroot` num shell dentro do sistema do disco |
+| 2 | boot travado no `fsck`, desligamento sujo | `e2fsck -fp` em `ROOT` e `Files`, com as partições desmontadas |
+| 3 | o menu do systemd-boot sumiu | `bootctl install`, `bootctl update` e lista as entradas |
+| 4 | kernel novo não acha os módulos | `mkinitcpio -P` |
+| 5 | update interrompido no meio | reinstala `linux-zen`, `linux-firmware` e `systemd` |
+| 6 | `invalid or corrupted package (PGP signature)` | refaz o keyring e o banco de sync do pacman |
+| 7 | esqueceu a senha | `passwd` no usuário de uid 1000 ou no root |
+| 8 | não sei por que não subiu | erros e cauda do **boot anterior**, lidos direto de `/var/log/journal` |
+| 9 | conferir antes de mexer | `lsblk`, os rótulos que o myarch usa e o espaço livre |
+
+O `e2fsck` só roda em partição desmontada — montada, ele recusa ou corrompe. Por isso a opção 2
+desmonta tudo antes e pula o que ainda estiver em uso, dizendo qual pulou. Código de saída 1 do
+`e2fsck` quer dizer "achei erros e corrigi", não falha; o 4 é o caso que o modo automático não
+resolve, e aí o menu mostra o comando para rodar à mão.
+
+A opção **5 do menu principal** é o meio-termo entre não fazer nada e rebaixar tudo: roda só o
+`setup.sh` do repo de dotfiles que já está no disco. Não clona, não instala pacote, não toca na
+rede. É o caminho para quando o que quebrou foi um link do stow ou a config do compositor.
+
 ## Se um update quebrar
 
 Sem snapshot: o caminho é o pendrive. Bootar o live, montar a root e arrumar de lá
@@ -462,7 +491,9 @@ A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archli
   nem ter internet pra achar o instalador;
 - menu no tty1 depois do autologin (`myarch-menu`): `1` instala automático (ver [Modo
   automático](#modo-automático)), `2` instala perguntando, `3` usa a cópia embutida sem baixar,
-  shell, reiniciar, desligar. Com `script=` na linha de boot o menu não aparece, igual ao releng;
+  `4` rebaixa os dotfiles, `5` só reaplica a config, `6` abre o submenu de recuperação (ver
+  [Consertar sem formatar](#consertar-sem-formatar)), shell, reiniciar, desligar. Com `script=`
+  na linha de boot o menu não aparece, igual ao releng;
 - lista de pacotes enxuta (`archiso/packages.x86_64`, 40 pacotes): kernel, firmware, boot, rede
   (cabo e Wi-Fi), o que o `install.sh` chama e socorro básico (`ntfs-3g`, `exfatprogs`, `rsync`,
   `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: Wi-Fi, PXE, clonezilla,
