@@ -1,11 +1,13 @@
+[Português](README.pt-BR.md)
+
 <div align="center">
 
 # myarch
 
-**Instalador do Arch Linux**
+**Arch Linux installer**
 
-Instala uma base limpa em UEFI + systemd-boot + ext4, e já deixa
-os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro boot.
+Installs a clean base on UEFI + systemd-boot + ext4, and leaves the
+[dotfiles](https://github.com/eualexandrerrr/dotfiles) cloned and ready for the first boot.
 
 [![Arch](https://img.shields.io/badge/Arch_Linux-1793D1?style=flat-square&logo=arch-linux&logoColor=white)](https://archlinux.org)
 [![systemd-boot](https://img.shields.io/badge/systemd--boot-FF6600?style=flat-square&logo=linux&logoColor=white)](https://wiki.archlinux.org/title/Systemd-boot)
@@ -15,158 +17,160 @@ os [dotfiles](https://github.com/eualexandrerrr/dotfiles) clonados pro primeiro 
 
 ---
 
-## O que ele faz
+## What it does
 
-| Etapa | Detalhe |
+| Step | Detail |
 |:--|:--|
-| Checagem | Exige root, boot em UEFI e rede ativa |
-| Ambiente live | `br-abnt2`, NTP, `reflector` nos mirrors BR/CL/US |
-| **Partições preservadas** | Rótulos de `KEEP_LABELS` **nunca** são tocados, estejam em que posição estiverem no disco. Veja [Duas partições](#duas-partições) |
-| Particionamento | **Duas partições, só.** GPT: ESP 1 GiB FAT32 + root com teto de 100 GiB (`ROOT_MAX_GB`) + o resto do disco na partição de dados |
-| Partição de dados | Rótulo `Files`, ext4, montada em **`/home`**: criada se não existir, **reaproveitada intacta** se existir. É ela que faz reinstalar o sistema não custar nada |
-| Desempenho do ext4 | `fast_commit` (caminho curto do `fsync`), `-m 1` na root e `-m 0` nos dados, tabelas escritas no `mkfs` (`lazy_itable_init=0`) |
-| Sistema de arquivos | ext4 com `noatime` (btrfs saiu em 09/2026, ver Decisões) |
-| Base | `pacstrap` com `linux-zen` + headers, firmware, `amd-ucode` |
-| Localidade | `pt_BR.UTF-8`, `America/Sao_Paulo`, teclado ABNT2 no console e no X |
-| Usuário | Cria o usuário no `wheel` com shell `zsh`, sudo liberado |
-| Bootloader | `systemd-boot` com entrada normal e fallback, `systemd-boot-update.service` habilitado, entrada de NVRAM conferida |
-| Swap | Nenhuma partição: `zram-generator` com metade da RAM, teto de 8 GiB, `zstd` |
-| Desempenho | `amd_pstate=active`, `transparent_hugepage=always`, `vm.max_map_count` da SteamOS, `DefaultLimitNOFILE` pra esync, `makepkg` com `-j$(nproc)`, `!debug` e `-march=native` |
-| Mirrors | `reflector.timer` semanal: só Brasil, https, os 10 mais rápidos |
-| Cache | `paccache.timer` poda o cache do `pacman` |
-| NVIDIA | Já grava `nvidia_drm.modeset=1`, `nvidia_drm.fbdev=1`, `NVreg_PreserveVideoMemoryAllocations=1` e `NVreg_UsePageAttributeTable=1` |
-| Dotfiles | Clona em `~/.dotfiles` pronto pra rodar |
+| Checks | Requires root, UEFI boot and a working network |
+| Live environment | `br-abnt2`, NTP, `reflector` over the BR/CL/US mirrors |
+| **Preserved partitions** | Labels listed in `KEEP_LABELS` are **never** touched, wherever they sit on the disk. See [Two partitions](#two-partitions) |
+| Partitioning | **Two partitions, that is all.** GPT: 1 GiB FAT32 ESP + root capped at 100 GiB (`ROOT_MAX_GB`) + the rest of the disk as the data partition |
+| Data partition | Label `Files`, ext4, mounted at **`/home`**: created if missing, **reused untouched** if present. It is what makes reinstalling the system cost nothing |
+| ext4 performance | `fast_commit` (short `fsync` path), `-m 1` on root and `-m 0` on data, tables written at `mkfs` time (`lazy_itable_init=0`) |
+| Filesystem | ext4 with `noatime` (btrfs was dropped in 09/2026, see Decisions) |
+| Base | `pacstrap` with `linux-zen` + headers, firmware, `amd-ucode` |
+| Locale | `pt_BR.UTF-8`, `America/Sao_Paulo`, ABNT2 keyboard on the console and in X |
+| User | Creates the user in `wheel` with the `zsh` shell and passwordless sudo |
+| Bootloader | `systemd-boot` with a normal entry and a fallback, `systemd-boot-update.service` enabled, NVRAM entry verified |
+| Swap | No partition: `zram-generator` with half the RAM, capped at 8 GiB, `zstd` |
+| Performance | `amd_pstate=active`, `transparent_hugepage=always`, SteamOS's `vm.max_map_count`, `DefaultLimitNOFILE` for esync, `makepkg` with `-j$(nproc)`, `!debug` and `-march=native` |
+| Mirrors | Weekly `reflector.timer`: Brazil only, https, the 10 fastest |
+| Cache | `paccache.timer` prunes the `pacman` cache |
+| NVIDIA | Already writes `nvidia_drm.modeset=1`, `nvidia_drm.fbdev=1`, `NVreg_PreserveVideoMemoryAllocations=1` and `NVreg_UsePageAttributeTable=1` |
+| Dotfiles | Clones into `~/.dotfiles`, ready to run |
 
-## A máquina
+## The machine
 
-O instalador é genérico, mas foi escrito e testado neste PC. Vale como referência do que
-ele espera encontrar.
+The installer is generic, but it was written and tested on this PC. It is worth listing as a
+reference of what it expects to find.
 
-| Peça | Modelo |
+| Part | Model |
 |:--|:--|
-| CPU | AMD Ryzen 7 5700X, 8c/16t, AM4, **sem vídeo integrado** |
-| Placa-mãe | ASUS TUF Gaming B550M-PLUS (mATX, B550) — x16 Gen4 pela CPU, x16 Gen3 (em x4) pelo chipset, 2 M.2, LAN 2.5G |
-| RAM | 32 GB DDR4 dual channel (4 slots, até 128 GB) |
-| GPU do host | PCYes Radeon RX 550 4GB — `amdgpu`, é ela que desenha o KDE |
-| GPU da VM | Gainward RTX 3090 24GB — presa no `vfio-pci`, passada pra VM Windows |
+| CPU | AMD Ryzen 7 5700X, 8c/16t, AM4, **no integrated graphics** |
+| Motherboard | ASUS TUF Gaming B550M-PLUS (mATX, B550) — x16 Gen4 off the CPU, x16 Gen3 (electrically x4) off the chipset, 2 M.2, 2.5G LAN |
+| RAM | 32 GB DDR4 dual channel (4 slots, up to 128 GB) |
+| Host GPU | PCYes Radeon RX 550 4GB — `amdgpu`, this is the one that draws KDE |
+| VM GPU | Gainward RTX 3090 24GB — bound to `vfio-pci`, passed through to the Windows VM |
 | SSD | Corsair MP700 ELITE 932 GB NVMe Gen4 |
-| Fonte | 850 W 80 Plus Gold |
-| Gabinete | PCYes Forcefield Mini Black Vulcan (mini tower, GPU até 310 mm) |
-| Monitores | ASUS XG27ACS 2560x1440@180Hz (paisagem) + LG UltraGear 2560x1440 (em pé) |
+| PSU | 850 W 80 Plus Gold |
+| Case | PCYes Forcefield Mini Black Vulcan (mini tower, GPU up to 310 mm) |
+| Monitors | ASUS XG27ACS 2560x1440@180Hz (landscape) + LG UltraGear 2560x1440 (portrait) |
 
-**Duas GPUs de propósito.** O client do RedM não passa pelo anticheat em Wine, então o jogo
-roda numa VM Windows com GPU real. Uma GPU passada por `vfio` some do host — por isso a
-RX 550: é ela que mantém o Linux com tela enquanto a 3090 fica dedicada à VM. A 3090 tem
-cooler de 2,7 slots e tampa o slot de baixo fisicamente, então a RX 550 sai por um riser
-PCIe 3.0 x16 de 20 cm com plugue de 90°.
+**Two GPUs on purpose.** The RedM client does not get past the anticheat under Wine, so the game
+runs in a Windows VM with a real GPU. A GPU passed through with `vfio` disappears from the host —
+hence the RX 550: it is what keeps Linux on screen while the 3090 stays dedicated to the VM. The
+3090 has a 2.7-slot cooler and physically blocks the slot below it, so the RX 550 hangs off a 20 cm
+PCIe 3.0 x16 riser with a 90° plug.
 
-O `configure_nvidia()` do [dotfiles](https://github.com/eualexandrerrr/dotfiles) e o
-`kernel-nvidia` do `packages.txt` valem enquanto a 3090 ainda desenha o host; quando ela
-for pro `vfio-pci`, saem os dois e entra o bind por ID (`10de:2204,10de:1aef`).
+`configure_nvidia()` in the [dotfiles](https://github.com/eualexandrerrr/dotfiles) and
+`kernel-nvidia` in `packages.txt` are valid while the 3090 still draws the host; when it moves to
+`vfio-pci`, both go away and binding by ID takes over (`10de:2204,10de:1aef`).
 
-## Requisitos
+## Requirements
 
-| Item | Exigência | Por quê |
+| Item | Requirement | Why |
 |:--|:--|:--|
-| Firmware | **UEFI**, com CSM/Legacy desligado | O script recusa bootar em BIOS legada. Ele checa `/sys/firmware/efi/efivars` antes de tocar em qualquer disco |
-| Secure Boot | **desligado** | A ISO do Arch não é assinada, e o `nvidia-open-dkms` também não |
-| Disco de destino | mínimo 20 GB, recomendado 64 GB+ | 1 GiB vai pra ESP, o resto é ext4. Só o sistema base já ocupa ~3 GB, e o `@pkg` guarda cache de pacote |
-| Rede no live ISO | cabo | O `pacstrap` baixa cerca de 900 MB. A ISO própria não traz Wi-Fi |
-| Pendrive | [Ventoy](https://ventoy.net) + ISO do Arch | Qualquer pendrive de 4 GB serve |
-| Processador | x86-64 | Não há suporte a ARM aqui |
+| Firmware | **UEFI**, with CSM/Legacy off | The script refuses to boot on legacy BIOS. It checks `/sys/firmware/efi/efivars` before touching any disk |
+| Secure Boot | **off** | The Arch ISO is not signed, and neither is `nvidia-open-dkms` |
+| Target disk | 20 GB minimum, 64 GB+ recommended | 1 GiB goes to the ESP, the rest is ext4. The base system alone takes ~3 GB, and `@pkg` keeps a package cache |
+| Network in the live ISO | wired | `pacstrap` downloads about 900 MB. The custom ISO ships no Wi-Fi |
+| USB stick | [Ventoy](https://ventoy.net) + the Arch ISO | Any 4 GB stick will do |
+| Processor | x86-64 | There is no ARM support here |
 
-O script instala microcode da Intel **e** da AMD. O errado é ignorado no boot, então o mesmo
-pendrive serve pras duas plataformas.
+The script installs both Intel **and** AMD microcode. The wrong one is ignored at boot, so the same
+USB stick works for both platforms.
 
-## Duas partições
+## Two partitions
 
-O disco tem **duas partições e mais nada** (a ESP não conta: 1 GiB, sem letra, invisível):
+The disk has **two partitions and nothing else** (the ESP does not count: 1 GiB, no drive letter,
+invisible):
 
-| | Rótulo | Tamanho | Sistema de arquivos | Montagem | Papel |
+| | Label | Size | Filesystem | Mount | Role |
 |:--|:--|:--|:--|:--|:--|
-| sistema | `ROOT` | **100 GiB** (`ROOT_MAX_GB`) | ext4 | `/` | descartável: some a cada reinstalação |
-| dados | `Files` | todo o resto | ext4 | **`/home`** | sagrada: **nunca formatada** se já existir |
+| system | `ROOT` | **100 GiB** (`ROOT_MAX_GB`) | ext4 | `/` | disposable: gone on every reinstall |
+| data | `Files` | everything else | ext4 | **`/home`** | sacred: **never formatted** if it already exists |
 
-**Rótulo é sagrado, posição não importa.** O instalador apaga tudo no disco **menos** as partições
-cujo rótulo (de sistema de arquivos ou de partição GPT) esteja em `KEEP_LABELS`:
+**The label is sacred, the position does not matter.** The installer erases everything on the disk
+**except** the partitions whose label (filesystem label or GPT partition label) is in `KEEP_LABELS`:
 
 ```bash
-KEEP_LABELS="Files Alexandre HOME"     # "Alexandre" e "HOME" são nomes antigos, mantidos por segurança
+KEEP_LABELS="Files Alexandre HOME"     # "Alexandre" and "HOME" are old names, kept for safety
 ```
 
-Isso é o que torna o sistema descartável de verdade: a root é a única coisa que se perde ao
-reinstalar, e ela não guarda nada seu — `~/.config`, `~/.claude`, `~/.dotfiles`, projetos,
-biblioteca da Steam e imagem de VM ficam do lado de fora. **É o mesmo contrato do
-[MyWinISO](https://github.com/eualexandrerrr/MyWinISO)**, que protege os mesmos rótulos.
+This is what makes the system genuinely disposable: root is the only thing lost on a reinstall, and
+it holds nothing of yours — `~/.config`, `~/.claude`, `~/.dotfiles`, projects, the Steam library and
+VM images all live outside of it. **It is the same contract as
+[MyWinISO](https://github.com/eualexandrerrr/MyWinISO)**, which protects the same labels.
 
-### Por que ext4 e não NTFS na partição de dados
+### Why ext4 and not NTFS on the data partition
 
-Ela é o `/home`. NTFS não serve de `/home`: o `ntfs3` do kernel não cria symlink POSIX, não guarda
-dono nem bit de execução. Os `dotfiles` fazem `ln -sfn` de tudo e morreriam na primeira linha, e
-todo repositório git apareceria com os arquivos modificados. Não é "pior", é quebrado.
+It is `/home`. NTFS cannot serve as `/home`: the kernel's `ntfs3` does not create POSIX symlinks and
+stores neither ownership nor the execute bit. The `dotfiles` `ln -sfn` everything and would die on
+the first line, and every git repository would show every file as modified. It is not "worse", it is
+broken.
 
-Uma partição de dados NTFS **legada** continua sendo reconhecida e preservada, mas vai para
-`/mnt/dados` como área compartilhada — não vira `/home`, e o instalador avisa por quê.
+A **legacy** NTFS data partition is still recognised and preserved, but it goes to `/mnt/dados` as a
+shared area — it does not become `/home`, and the installer says why.
 
-Com `/home` preservada o usuário é recriado com o **mesmo UID e GID de antes**, lidos da própria
-pasta: dono no ext4 é um número, não um nome, e UID diferente deixaria o home inteiro parecendo de
-outra pessoa.
+With `/home` preserved, the user is recreated with the **same UID and GID as before**, read from the
+folder itself: ownership on ext4 is a number, not a name, and a different UID would make the whole
+home look like it belongs to somebody else.
 
-Para ignorar a proteção e apagar o disco inteiro — disco novo, ou recomeço mesmo:
+To bypass the protection and wipe the whole disk — a new disk, or a genuine fresh start:
 
 ```bash
 WIPE_ALL=1 bash install.sh
 ```
 
-O modo automático **recusa** `WIPE_ALL`, e também recusa um disco que já tenha partições mas nenhuma
-protegida: ninguém está olhando a tela no modo automático, e dez segundos não são aviso suficiente
-para destruir dados.
+Automatic mode **refuses** `WIPE_ALL`, and it also refuses a disk that already has partitions but
+none of them protected: nobody is watching the screen in automatic mode, and ten seconds is not
+warning enough to destroy data.
 
-## Antes de instalar
+## Before installing
 
-**O que não estiver protegido por rótulo é apagado.** Não existe redimensionamento: o instalador só
-cria partição em espaço já livre. Se você quer uma área de dados menor para abrir espaço, encolha-a
-**antes**, pelo sistema que já está instalado (o Gerenciamento de Disco do Windows faz isso no NTFS
-sem risco), e deixe o espaço livre esperando.
+**Anything not protected by label is erased.** There is no resizing: the installer only creates
+partitions in space that is already free. If you want a smaller data area to make room, shrink it
+**first**, from the system already installed (Windows Disk Management does that on NTFS without
+risk), and leave the free space waiting.
 
-Antes de bootar o pendrive:
+Before booting the USB stick:
 
-1. **Tire o que só existe naquele disco e fora das partições protegidas.** Repositório sem push,
-   pasta que não está em backup, chave de SSH, arquivo de configuração de aplicativo. Vale rodar
-   `git status` em cada projeto — trabalho não commitado não vai pro GitHub sozinho. O que estiver
-   na `HOME` ou na `Files` fica; o resto do disco, não.
-2. **Se havia Windows com BitLocker, salve a chave de recuperação primeiro.** Desligar o
-   Secure Boot muda o que o TPM mede, e o Windows pode exigir os 48 dígitos no boot seguinte.
-   Isso importa mesmo se o plano é apagar o Windows: se algo der errado no meio, você quer
-   conseguir voltar. Pegue em `manage-bde -protectors -get C:` ou em
+1. **Take out whatever exists only on that disk and outside the protected partitions.** An unpushed
+   repository, a folder that is not backed up, an SSH key, an application config file. Running
+   `git status` in each project is worth it — uncommitted work does not reach GitHub by itself. What
+   is on `HOME` or on `Files` stays; the rest of the disk does not.
+2. **If there was Windows with BitLocker, save the recovery key first.** Turning Secure Boot off
+   changes what the TPM measures, and Windows may demand the 48 digits on the next boot. This matters
+   even if the plan is to erase Windows: if something goes wrong halfway through, you want to be able
+   to go back. Get it from `manage-bde -protectors -get C:` or from
    `account.microsoft.com/devices/recoverykey`.
-3. **Confira o backup no destino, não na origem.** Pasta sincronizada não é backup até o
-   arquivo estar do outro lado. Abra o serviço no navegador e veja os arquivos lá.
-4. **Anote qual disco é qual.** Em `lsblk`, confira modelo e tamanho. `/dev/nvme0n1` e
-   `/dev/nvme1n1` trocam de número entre boots com mais frequência do que se imagina.
+3. **Check the backup at the destination, not at the source.** A synced folder is not a backup until
+   the file is on the other side. Open the service in a browser and look at the files there.
+4. **Write down which disk is which.** In `lsblk`, check the model and size. `/dev/nvme0n1` and
+   `/dev/nvme1n1` swap numbers between boots more often than you would think.
 
-## BIOS: o que mexer
+## BIOS: what to change
 
-| Opção | Valor | Consequência de errar |
+| Option | Value | Consequence of getting it wrong |
 |:--|:--|:--|
-| Secure Boot | **Disabled** | A ISO nem aparece no menu de boot |
-| CSM / Legacy Boot | **Disabled** | O pendrive boota em modo legado e o script para no `preflight` |
-| Boot Mode | **UEFI only** | Mesmo caso acima |
-| Fast Boot | Desligar se o pendrive não aparecer | A firmware pula a inicialização do USB |
-| SATA Mode | **AHCI** (não RAID / Intel RST) | O Linux não enxerga o disco |
+| Secure Boot | **Disabled** | The ISO does not even show up in the boot menu |
+| CSM / Legacy Boot | **Disabled** | The USB stick boots in legacy mode and the script stops at `preflight` |
+| Boot Mode | **UEFI only** | Same as above |
+| Fast Boot | Turn off if the USB stick does not appear | The firmware skips USB initialisation |
+| SATA Mode | **AHCI** (not RAID / Intel RST) | Linux does not see the disk |
 
-Se a máquina tinha Windows e você vai manter algum outro sistema, desligue também o
-**Início Rápido** do Windows: ele hiberna o NTFS, e montar isso do Linux corrompe.
+If the machine had Windows and you are going to keep another system around, also turn off Windows
+**Fast Startup**: it hibernates NTFS, and mounting that from Linux corrupts it.
 
-## Instalação passo a passo
+## Step-by-step installation
 
-### 1. Preparar o pendrive
+### 1. Prepare the USB stick
 
-O pendrive é montado com [Ventoy](https://ventoy.net), que boota ISO como arquivo — dá pra
-ter Arch e Windows no mesmo pendrive e trocar a ISO sem regravar nada.
+The stick is built with [Ventoy](https://ventoy.net), which boots an ISO as a file — you can have
+Arch and Windows on the same stick and swap an ISO without rewriting anything.
 
 ```
-PENDRIVE/
+USB STICK/
 ├── archlinux-2026.08.01-x86_64.iso
 ├── Win11_pt-BR.iso
 └── myarch/
@@ -174,40 +178,41 @@ PENDRIVE/
     └── README.md
 ```
 
-Baixe a ISO em [archlinux.org/download](https://archlinux.org/download/) e copie pra raiz do
-pendrive. O Ventoy acha sozinho. Ou use a [ISO própria](#iso-própria) deste repo, que já vem
-com o instalador dentro e o teclado certo; nesse caso os passos 3 e 4 se resumem a escolher
-`1` no menu.
+Download the ISO from [archlinux.org/download](https://archlinux.org/download/) and copy it to the
+root of the stick. Ventoy finds it on its own. Or use this repo's [custom ISO](#custom-iso), which
+already ships the installer inside and the right keyboard; in that case steps 3 and 4 come down to
+picking `1` in the menu.
 
 ### 2. BIOS
 
-Duas coisas, só:
+Two things, that is all:
 
-- **UEFI ligado.** O script recusa bootar em BIOS legada, e recusa cedo, antes de tocar no disco.
-- **Secure Boot desligado.** O `nvidia-open-dkms` não vem assinado.
+- **UEFI on.** The script refuses to boot on legacy BIOS, and it refuses early, before touching the
+  disk.
+- **Secure Boot off.** `nvidia-open-dkms` does not ship signed.
 
-### 3. Bootar e conectar
+### 3. Boot and connect
 
-Escolha a ISO do Arch no menu do Ventoy. Cabo de rede já funciona sozinho. No wifi:
+Pick the Arch ISO in the Ventoy menu. A wired connection just works. On Wi-Fi:
 
 ```bash
 iwctl
 [iwd]# device list
 [iwd]# station wlan0 scan
 [iwd]# station wlan0 get-networks
-[iwd]# station wlan0 connect NOME_DA_REDE
+[iwd]# station wlan0 connect NETWORK_NAME
 [iwd]# exit
 ```
 
-Confira antes de seguir — sem rede o script para logo no começo:
+Check before going on — without a network the script stops right at the start:
 
 ```bash
 ping -c1 archlinux.org
 ```
 
-### 4. Rodar o instalador
+### 4. Run the installer
 
-Direto do pendrive, sem baixar nada:
+Straight from the USB stick, without downloading anything:
 
 ```bash
 loadkeys br-abnt2
@@ -215,7 +220,7 @@ mkdir -p /mnt/usb && mount /dev/disk/by-label/Ventoy /mnt/usb
 bash /mnt/usb/myarch/install.sh
 ```
 
-Ou clonando, se preferir a versão mais nova:
+Or by cloning, if you prefer the newest version:
 
 ```bash
 loadkeys br-abnt2
@@ -224,10 +229,10 @@ git clone https://github.com/eualexandrerrr/MyArchISO
 bash myarch/install.sh
 ```
 
-### 5. O que ele vai perguntar
+### 5. What it will ask
 
-Ele lista os discos e pede o alvo. **Confira com calma:** o disco escolhido é apagado por
-inteiro, e pra confirmar você tem que digitar o caminho completo, não `s` nem `y`.
+It lists the disks and asks for the target. **Check carefully:** the chosen disk is wiped whole, and
+to confirm you have to type the full path, not `y` or `s`.
 
 ```
 Disco de destino (ex: /dev/nvme0n1): /dev/nvme0n1
@@ -238,45 +243,45 @@ Senha de alexandre:
 Senha do root:
 ```
 
-Pra pular a primeira pergunta:
+To skip the first question:
 
 ```bash
 DISK=/dev/nvme0n1 bash install.sh
 ```
 
-Daí em diante roda sozinho. O grosso do tempo é o `pacstrap` baixando cerca de 900 MB.
+From there on it runs by itself. Most of the time is `pacstrap` downloading about 900 MB.
 
-### 6. Depois do reboot
+### 6. After the reboot
 
-Tire o pendrive e logue como o usuário que você criou. O instalador já deixou os dotfiles
-clonados e um `PROXIMOS-PASSOS.txt` no home:
+Remove the USB stick and log in as the user you created. The installer already left the dotfiles
+cloned and a `PROXIMOS-PASSOS.txt` in the home directory:
 
 ```bash
 cd ~/.dotfiles
 ./install.sh
 ```
 
-É essa segunda etapa que instala o KDE Plasma, o driver `nvidia-open-dkms`, o
-`claude-code` e o rice inteiro. Reinicie de novo no fim.
+That second stage is what installs KDE Plasma, the `nvidia-open-dkms` driver, `claude-code` and the
+whole rice. Reboot again at the end.
 
-## Modo automático
+## Automatic mode
 
 ```bash
 AUTO=1 bash install.sh
 ```
 
-Não pergunta nada. Serve pra reinstalar a mesma máquina sem digitar:
+It asks nothing. It is meant for reinstalling the same machine without typing:
 
-| o quê | de onde vem |
+| what | where it comes from |
 |:--|:--|
-| Disco | o maior disco interno (não removível, não USB), fora o que carrega o live e o pendrive de configuração. Um só disco interno = ele. **Se o disco já tiver partições e nenhuma protegida, ele para** em vez de apagar |
-| Hostname, usuário | `HOSTNAME_DEFAULT` e `USERNAME_DEFAULT` do topo do script (`RRR`, `alexandre`), ou `myarch.conf` |
-| Senha | `PASSWORD_HASH` (usuário e root com a mesma). Sem hash, pergunta a senha uma vez |
-| Aviso | mostra o disco e espera 10 segundos; qualquer tecla cancela |
-| Depois | agenda `myarch-firstboot.service`: no primeiro boot roda `~/.dotfiles/install.sh` no tty1 e reinicia no SDDM |
+| Disk | the largest internal disk (not removable, not USB), excluding the one carrying the live system and the configuration stick. A single internal disk = that one. **If the disk already has partitions and none of them is protected, it stops** instead of erasing |
+| Hostname, user | `HOSTNAME_DEFAULT` and `USERNAME_DEFAULT` from the top of the script (`RRR`, `alexandre`), or `myarch.conf` |
+| Password | `PASSWORD_HASH` (user and root get the same one). Without a hash, it asks for the password once |
+| Warning | shows the disk and waits 10 seconds; any key cancels |
+| Afterwards | schedules `myarch-firstboot.service`: on the first boot it runs `~/.dotfiles/install.sh` on tty1 and reboots into SDDM |
 
-O `myarch.conf` fica **fora do repositório**, na partição rotulada `Ventoy` do pendrive
-(pasta `myarch/`), porque carrega o hash da senha:
+`myarch.conf` lives **outside the repository**, on the partition labelled `Ventoy` on the USB stick
+(folder `myarch/`), because it carries the password hash:
 
 ```ini
 HOSTNAME=RRR
@@ -284,83 +289,84 @@ USERNAME=alexandre
 PASSWORD_HASH='$6$...'      # openssl passwd -6
 ```
 
-O arquivo é lido com `grep`, não com `source`. `DISK=/dev/...` também é aceito ali, pra
-forçar o alvo numa máquina com mais de um disco.
+The file is read with `grep`, not with `source`. `DISK=/dev/...` is accepted there too, to force the
+target on a machine with more than one disk.
 
-Duas decisões que vêm com o automático e valem pro modo manual também: `wheel` tem
-`NOPASSWD` no sudo (desktop de uma pessoa só, pedido do dono), e root e usuário recebem a
-mesma senha.
+Two decisions that come with automatic mode and hold for manual mode as well: `wheel` gets
+`NOPASSWD` in sudo (single-person desktop, the owner's request), and root and the user get the same
+password.
 
-## Se algo der errado
+## If something goes wrong
 
-| O que aparece | O que é | O que fazer |
+| What shows up | What it is | What to do |
 |:--|:--|:--|
-| `o sistema nao bootou em UEFI` | Ainda em BIOS legada | Ligar UEFI no setup da placa |
-| `sem internet` | Sem rede no live ISO | Conectar com `iwctl`, ou usar cabo |
-| `nao e um dispositivo de bloco` | Caminho do disco errado | Conferir com `lsblk` |
-| `confirmacao nao bateu` | Você digitou diferente | Nada foi tocado no disco. Rodar de novo |
-| `AVISO: nao registrei a entrada de boot na NVRAM` | A firmware recusou gravar | O sistema ainda boota, pelo caminho removível do ESP. Dá pra criar depois com `efibootmgr` |
+| `o sistema nao bootou em UEFI` | Still on legacy BIOS | Turn UEFI on in the board's setup |
+| `sem internet` | No network in the live ISO | Connect with `iwctl`, or use a cable |
+| `nao e um dispositivo de bloco` | Wrong disk path | Check with `lsblk` |
+| `confirmacao nao bateu` | You typed something different | Nothing on the disk was touched. Run it again |
+| `AVISO: nao registrei a entrada de boot na NVRAM` | The firmware refused to write | The system still boots, through the ESP's removable path. You can create the entry later with `efibootmgr` |
 
-O script só apaga disco depois de todas as checagens e da confirmação digitada. Se ele morrer
-antes disso, seu disco está intacto.
+The script only erases a disk after all the checks and the typed confirmation. If it dies before
+that, your disk is intact.
 
-Se travar no meio da instalação, é seguro simplesmente rodar de novo: ele reparticiona do
-zero, não tenta aproveitar estado anterior.
+If it hangs mid-installation, it is safe to simply run it again: it repartitions from scratch, it
+does not try to reuse previous state.
 
-## Se o desktop não subir
+## If the desktop does not come up
 
-A opção **4** do menu do live reinstala só os dotfiles, sem tocar em partição nenhuma: monta a
-ROOT, põe a partição de dados em `/home`, faz `arch-chroot`, apaga `~/.dotfiles`, clona do
-GitHub, roda o `install.sh` do repo de dotfiles como o dono do `/home` e reinicia.
+Option **4** of the live menu reinstalls only the dotfiles, without touching any partition: it mounts
+ROOT, puts the data partition at `/home`, does `arch-chroot`, deletes `~/.dotfiles`, clones from
+GitHub, runs the dotfiles repo's `install.sh` as the owner of `/home` and reboots.
 
-Ela existe porque a configuração do desktop mora em `/home`, que sobrevive à formatação.
-Reinstalar o Arch inteiro não conserta um compositor que não sobe — o `~/.config` volta igual.
-Antes disso a única saída era montar tudo à mão pelo shell.
+It exists because the desktop configuration lives in `/home`, which survives formatting. Reinstalling
+the whole of Arch does not fix a compositor that will not start — `~/.config` comes back identical.
+Before this, the only way out was mounting everything by hand from the shell.
 
-Precisa de rede: os dotfiles vêm do GitHub, não da ISO. O reinício é automático depois de 10 s,
-com `[esc]` para cancelar.
+It needs a network: the dotfiles come from GitHub, not from the ISO. The reboot is automatic after
+10 s, with `[esc]` to cancel.
 
 
-## Consertar sem formatar
+## Fixing without formatting
 
-A opção **6** abre um submenu só de recuperação. Nada ali formata disco: tudo monta a ROOT em
-`/mnt/sys`, põe a partição de dados em `/mnt/sys/home` e a ESP em `/mnt/sys/boot`, faz o que
-foi pedido e desmonta ao sair. A ordem de montagem importa — sem a ESP montada, `bootctl` e
-`mkinitcpio` escrevem no lugar errado e o disco continua sem bootar.
+Option **6** opens a submenu dedicated to recovery. Nothing in there formats a disk: everything
+mounts ROOT at `/mnt/sys`, puts the data partition at `/mnt/sys/home` and the ESP at
+`/mnt/sys/boot`, does what was asked and unmounts on the way out. Mount order matters — without the
+ESP mounted, `bootctl` and `mkinitcpio` write to the wrong place and the disk still will not boot.
 
-| Opção | Para quando | O que faz |
+| Option | For when | What it does |
 |:--|:--|:--|
-| 1 | qualquer coisa que precise da mão | `arch-chroot` num shell dentro do sistema do disco |
-| 2 | boot travado no `fsck`, desligamento sujo | `e2fsck -fp` em `ROOT` e `Files`, com as partições desmontadas |
-| 3 | o menu do systemd-boot sumiu | `bootctl install`, `bootctl update` e lista as entradas |
-| 4 | kernel novo não acha os módulos | `mkinitcpio -P` |
-| 5 | update interrompido no meio | reinstala `linux-zen`, `linux-firmware` e `systemd` |
-| 6 | `invalid or corrupted package (PGP signature)` | refaz o keyring e o banco de sync do pacman |
-| 7 | esqueceu a senha | `passwd` no usuário de uid 1000 ou no root |
-| 8 | não sei por que não subiu | erros e cauda do **boot anterior**, lidos direto de `/var/log/journal` |
-| 9 | conferir antes de mexer | `lsblk`, os rótulos que o myarch usa e o espaço livre |
+| 1 | anything that needs hands-on work | `arch-chroot` into a shell inside the system on the disk |
+| 2 | boot stuck at `fsck`, dirty shutdown | `e2fsck -fp` on `ROOT` and `Files`, with the partitions unmounted |
+| 3 | the systemd-boot menu is gone | `bootctl install`, `bootctl update` and lists the entries |
+| 4 | a new kernel cannot find its modules | `mkinitcpio -P` |
+| 5 | an update interrupted halfway | reinstalls `linux-zen`, `linux-firmware` and `systemd` |
+| 6 | `invalid or corrupted package (PGP signature)` | rebuilds the pacman keyring and sync database |
+| 7 | forgotten password | `passwd` on the uid 1000 user or on root |
+| 8 | no idea why it did not come up | errors and the tail of the **previous boot**, read straight from `/var/log/journal` |
+| 9 | checking before touching anything | `lsblk`, the labels myarch uses and the free space |
 
-O `e2fsck` só roda em partição desmontada — montada, ele recusa ou corrompe. Por isso a opção 2
-desmonta tudo antes e pula o que ainda estiver em uso, dizendo qual pulou. Código de saída 1 do
-`e2fsck` quer dizer "achei erros e corrigi", não falha; o 4 é o caso que o modo automático não
-resolve, e aí o menu mostra o comando para rodar à mão.
+`e2fsck` only runs on an unmounted partition — mounted, it either refuses or corrupts. That is why
+option 2 unmounts everything first and skips whatever is still in use, saying which it skipped. Exit
+code 1 from `e2fsck` means "found errors and fixed them", not a failure; 4 is the case automatic mode
+cannot solve, and then the menu shows the command to run by hand.
 
-A opção **5 do menu principal** é o meio-termo entre não fazer nada e rebaixar tudo: roda só o
-`setup.sh` do repo de dotfiles que já está no disco. Não clona, não instala pacote, não toca na
-rede. É o caminho para quando o que quebrou foi um link do stow ou a config do compositor.
+Option **5 of the main menu** is the middle ground between doing nothing and re-pulling everything:
+it runs only the `setup.sh` of the dotfiles repo already on the disk. It does not clone, does not
+install packages, does not touch the network. It is the path for when what broke was a stow symlink
+or the compositor's config.
 
-## Se um update quebrar
+## If an update breaks something
 
-Sem snapshot: o caminho é o pendrive. Bootar o live, montar a root e arrumar de lá
-(`arch-chroot /mnt`, `pacman -U /var/cache/pacman/pkg/<pacote-anterior>`).
+No snapshots: the way out is the USB stick. Boot the live system, mount root and fix it from there
+(`arch-chroot /mnt`, `pacman -U /var/cache/pacman/pkg/<previous-package>`).
 
 ```bash
 mount /dev/nvme0n1p2 /mnt && mount /dev/nvme0n1p1 /mnt/boot && arch-chroot /mnt
 ```
 
-## Padrões
+## Defaults
 
-Editáveis no topo do `install.sh`:
+Editable at the top of `install.sh`:
 
 ```bash
 HOSTNAME_DEFAULT="RRR"
@@ -371,203 +377,207 @@ KEYMAP="br-abnt2"
 ESP_SIZE="1GiB"
 ```
 
-## Decisões
+## Decisions
 
-- **systemd-boot em vez de GRUB** — em UEFI puro o GRUB é peso morto. Boot mais rápido e
-  configuração é um arquivo de texto de 6 linhas.
-- **ext4 em vez de btrfs** (09/2026) — decisão do dono, por desempenho: sem CoW, sem
-  compressão, sem checksum de dados, menos trabalho por escrita em jogo e compilação. O preço
-  é não ter snapshot nem rollback; a versão com btrfs + `snapper` + `snap-pac` fica no
-  histórico do git (`git log --before=2026-09-06`).
-- **Sem criptografia** — desktop fixo, disco não sai da mesa. LUKS e Secure Boot ficam de
-  fora de propósito: o `nvidia-open-dkms` não vem assinado, então Secure Boot arrastaria
-  `sbctl` e UKI atrás.
-- **zram em vez de partição ou arquivo de swap** — swap em disco só serve pra hibernar, e
-  hibernar com a NVIDIA proprietária é fonte de dor. `vm.swappiness=180` é o valor certo pra
-  swap comprimida em RAM; o 60 padrão assume disco lento.
-- **ESP montada com `fmask=0077,dmask=0077`** — sem isso o `systemd` reclama que o arquivo de
-  random seed fica legível por qualquer usuário, e o `genfstab` carimba a montagem frouxa no
-  `fstab`.
-- **`linux-zen` e só `amd-ucode`** (09/2026) — máquina de jogo com Ryzen: o zen traz scheduler
-  e timers voltados a desktop; `intel-ucode` era peso morto. Pra outra máquina, trocar as duas
-  linhas em `BASE_PACKAGES` e nas entradas do `systemd-boot`.
-- **Ajustes de desempenho no chroot, não nos dotfiles** — `sysctl`, limites do systemd,
-  `makepkg.conf.d` e `reflector.conf` são do sistema, então nascem com ele. O que é de sessão
-  (perfil de energia, `ananicy-cpp`, modo da GPU) fica nos dotfiles.
-- **Preservar por rótulo, e não por posição** (09/2026) — o instalador do Windows desta casa
-  protegia "a última partição do disco". Basta criar uma partição depois dela para a regra
-  apontar para a errada. Rótulo não muda de lugar quando o disco é reparticionado, número
-  muda; por isso a proteção é por `KEEP_LABELS` e o número da partição é descoberto na hora.
-- **Sistema no primeiro espaço livre, `/home` no maior** — escolher o maior buraco para a root
-  parece natural e é errado: num disco onde o espaço grande está no fim, a root nascia lá e
-  não sobrava lugar para a `/home` separada. Medido em teste com disco de mentira antes de
-  encostar em disco de verdade.
-- **`/home` em partição própria em vez de junções** — no Windows a área persistente é feita
-  de junções de `%APPDATA%` para outro disco, com tarefa agendada consertando o que estava em
-  uso. No Linux nada disso é preciso: `/home` numa partição que o instalador não formata
-  resolve o mesmo problema sem nenhuma peça móvel.
-- **Duas partições, e a de dados é ext4** (09/2026) — decisão do dono. O Windows passa a viver
-  só em VM com passthrough, e VM não lê partição: recebe pasta compartilhada e vê letra de
-  unidade. Sem ninguém precisando ler o disco pelo Windows, não há mais motivo para o NTFS
-  atrapalhar o `/home`.
-- **`-m 0` na partição de dados** — a reserva de 5% do ext4 existe para o root ainda conseguir
-  logar num disco cheio; isso só faz sentido na raiz do sistema. Em 690 GiB de dados seriam
-  34 GiB parados sem servir a nada. Na root fica 1%, que já cumpre o papel em 100 GiB.
-- **`fast_commit` nas duas** — encurta o caminho do `fsync`, que é o que mais aparece em imagem
-  de VM, banco e compilação.
-- **`lazy_itable_init=0` no `mkfs`** — escreve as tabelas na hora, em vez de deixar uma thread
-  terminando em segundo plano nas primeiras horas de uso. Custa segundos na instalação e evita
-  lentidão inexplicada logo depois dela.
-- **`ntfs3` e não `ntfs-3g`** — o `ntfs3` é driver de kernel desde a 5.15; o `ntfs-3g` roda em
-  espaço de usuário pelo FUSE e é bem mais lento. O pacote `ntfs-3g` continua instalado pelas
-  ferramentas (`mkntfs`, `ntfsfix`), não pela montagem.
-- **`mkinitcpio -P` antes de escrever as entradas do boot** — o preset do pacote `linux` nem
-  sempre traz o `fallback` ligado. Sem conferir, a entrada "Arch Linux (fallback)" apareceria
-  no menu apontando pra uma imagem que nunca foi gerada: só morde no dia em que você precisa
-  dela. O `fallback` é ligado no preset, não gerado à mão, pra que o hook do `pacman` a
-  regenere a cada update de kernel.
-- **Opção do `pacman.conf` ajustada por função, não por `sed` ancorado em `^#`** — o pacman
-  6.1 passou a entregar `ParallelDownloads` já ativo. Um `sed` que só casa a linha comentada
-  deixou de ajustar qualquer coisa, e falhava calado.
-- **Entrada de boot conferida depois do `bootctl install`** — quando a firmware recusa gravar
-  na NVRAM, o `bootctl` não reclama, e a máquina passa a depender do caminho removível do
-  ESP, que outro sistema operacional pode sobrescrever.
+- **systemd-boot instead of GRUB** — on pure UEFI, GRUB is dead weight. Faster boot, and the
+  configuration is a 6-line text file.
+- **ext4 instead of btrfs** (09/2026) — the owner's decision, for performance: no CoW, no
+  compression, no data checksums, less work per write while gaming and compiling. The price is having
+  no snapshots and no rollback; the btrfs + `snapper` + `snap-pac` version stays in the git history
+  (`git log --before=2026-09-06`).
+- **No encryption** — a desktop that does not move, a disk that never leaves the desk. LUKS and
+  Secure Boot are deliberately left out: `nvidia-open-dkms` does not ship signed, so Secure Boot would
+  drag `sbctl` and a UKI along with it.
+- **zram instead of a swap partition or file** — swap on disk is only good for hibernating, and
+  hibernating with the proprietary NVIDIA driver is a source of pain. `vm.swappiness=180` is the right
+  value for compressed swap in RAM; the default 60 assumes a slow disk.
+- **ESP mounted with `fmask=0077,dmask=0077`** — without it `systemd` complains that the random seed
+  file is readable by any user, and `genfstab` stamps the loose mount into `fstab`.
+- **`linux-zen` and `amd-ucode` only** (09/2026) — a gaming machine with a Ryzen: zen brings a
+  scheduler and timers aimed at the desktop; `intel-ucode` was dead weight. For another machine,
+  change the two lines in `BASE_PACKAGES` and in the `systemd-boot` entries.
+- **Performance tuning in the chroot, not in the dotfiles** — `sysctl`, systemd limits,
+  `makepkg.conf.d` and `reflector.conf` belong to the system, so they are born with it. What belongs
+  to the session (power profile, `ananicy-cpp`, GPU mode) stays in the dotfiles.
+- **Preserving by label, not by position** (09/2026) — this household's Windows installer protected
+  "the last partition on the disk". Creating one partition after it is enough to make the rule point
+  at the wrong one. A label does not move when the disk is repartitioned, a number does; that is why
+  the protection is by `KEEP_LABELS` and the partition number is discovered at run time.
+- **System in the first free gap, `/home` in the largest one** — picking the largest hole for root
+  feels natural and is wrong: on a disk where the big space is at the end, root would be born there
+  and there would be no room left for a separate `/home`. Measured in a test with a fake disk before
+  touching a real one.
+- **`/home` on its own partition instead of junctions** — on Windows the persistent area is made of
+  junctions from `%APPDATA%` to another disk, with a scheduled task fixing up whatever was in use. On
+  Linux none of that is needed: `/home` on a partition the installer does not format solves the same
+  problem with no moving parts.
+- **Two partitions, and the data one is ext4** (09/2026) — the owner's decision. Windows now lives
+  only in a VM with passthrough, and a VM does not read a partition: it gets a shared folder and sees
+  a drive letter. With nobody needing to read the disk from Windows, there is no longer any reason to
+  let NTFS get in the way of `/home`.
+- **`-m 0` on the data partition** — ext4's 5% reserve exists so root can still log in on a full
+  disk; that only makes sense on the system root. On 690 GiB of data that would be 34 GiB sitting
+  there serving nothing. On root it is 1%, which already does the job in 100 GiB.
+- **`fast_commit` on both** — it shortens the `fsync` path, which is what shows up most with VM
+  images, databases and compilation.
+- **`lazy_itable_init=0` at `mkfs`** — writes the tables right away instead of leaving a thread
+  finishing up in the background during the first hours of use. It costs seconds during installation
+  and avoids unexplained slowness right after it.
+- **`ntfs3` and not `ntfs-3g`** — `ntfs3` has been a kernel driver since 5.15; `ntfs-3g` runs in
+  userspace through FUSE and is much slower. The `ntfs-3g` package stays installed for the tools
+  (`mkntfs`, `ntfsfix`), not for mounting.
+- **`mkinitcpio -P` before writing the boot entries** — the `linux` package's preset does not always
+  ship with `fallback` enabled. Without checking, the "Arch Linux (fallback)" entry would show up in
+  the menu pointing at an image that was never generated: it only bites on the day you need it.
+  `fallback` is enabled in the preset, not generated by hand, so that the `pacman` hook regenerates it
+  on every kernel update.
+- **The `pacman.conf` option adjusted by a function, not by a `sed` anchored at `^#`** — pacman 6.1
+  started shipping `ParallelDownloads` already enabled. A `sed` that only matches the commented line
+  stopped adjusting anything, and failed silently.
+- **The boot entry verified after `bootctl install`** — when the firmware refuses to write to NVRAM,
+  `bootctl` does not complain, and the machine ends up depending on the ESP's removable path, which
+  another operating system can overwrite.
 
-## Avisos
+## Warnings
 
-- O script **apaga tudo que não estiver protegido por rótulo** no disco escolhido. Ele pede
-  confirmação digitada e lista o que vai preservar, mas confira o alvo com `lsblk` antes.
-  Sistema ao lado de sistema no mesmo disco não existe aqui: a root é sempre recriada, então
-  instalar o Arch remove o Windows que estivesse na frente do disco (e vice-versa) — o que
-  sobrevive são os dados, não o outro sistema.
-- Exige boot em UEFI. BIOS legada não é suportada.
-- Secure Boot precisa estar desativado — `nvidia-open-dkms` não é assinado.
+- The script **erases everything not protected by label** on the chosen disk. It asks for a typed
+  confirmation and lists what it will preserve, but check the target with `lsblk` first. Dual-booting
+  two systems on the same disk does not exist here: root is always recreated, so installing Arch
+  removes the Windows that was at the front of the disk (and vice versa) — what survives is the data,
+  not the other system.
+- Requires UEFI boot. Legacy BIOS is not supported.
+- Secure Boot has to be disabled — `nvidia-open-dkms` is not signed.
 
-## O menu também se atualiza sozinho
+## The menu also updates itself
 
-Pelo mesmo motivo do instalador: a ISO congela o `myarch-menu` do commit em que foi gerada, e
-uma opção nova só chegaria ao pendrive regerando a imagem. Ao abrir, ele baixa a própria versão
-do GitHub, se troca e reexecuta uma vez. `MYARCH_MENU_ATUALIZADO` corta o laço.
+For the same reason as the installer: the ISO freezes the `myarch-menu` of the commit it was built
+from, so a new option would only reach the USB stick by rebuilding the image. On startup it downloads
+its own version from GitHub, replaces itself and re-executes once. `MYARCH_MENU_ATUALIZADO` breaks the
+loop.
 
-Só troca se o arquivo baixado for um bash válido (shebang mais `bash -n`) e diferente do atual.
-Um download pela metade sobrescreveria o menu por lixo e deixaria o live sem interface nenhuma.
-Sem rede, segue com a versão da ISO sem reclamar.
+It only swaps itself out if the downloaded file is valid bash (shebang plus `bash -n`) and different
+from the current one. A half-finished download would overwrite the menu with garbage and leave the
+live system with no interface at all. With no network, it carries on with the ISO's version without
+complaining.
 
-Isso vale só para o menu. O `install.sh` continua com o próprio caminho de download e as
-próprias checagens, descritas abaixo.
+This applies to the menu only. `install.sh` keeps its own download path and its own checks, described
+below.
 
-## O instalador vem do GitHub, não da ISO
+## The installer comes from GitHub, not from the ISO
 
-**As opções 1 e 2 do menu baixam o `install.sh` do GitHub na hora.** A cópia dentro da ISO é o
-plano B, para quando não há rede — e o menu diz de quando ela é.
+**Menu options 1 and 2 download `install.sh` from GitHub on the spot.** The copy inside the ISO is
+plan B, for when there is no network — and the menu tells you how old it is.
 
-É o mesmo desenho do [MyWinISO](https://github.com/eualexandrerrr/MyWinISO), onde o
-`primeiro-logon.ps1` baixa o `setup.ps1` em vez de carregá-lo dentro do XML. O motivo: **a ISO
-congela o instalador do commit em que foi gerada**, e uma ISO de duas semanas atrás instala o
-sistema de duas semanas atrás. Isso quase custou caro aqui — a ISO de 05/09/2026 carrega a versão
-que apagava o disco inteiro, sem preservar a partição de dados, e continuaria fazendo isso para
-sempre. Buscar na hora faz a ISO envelhecer sem apodrecer.
+It is the same design as [MyWinISO](https://github.com/eualexandrerrr/MyWinISO), where
+`primeiro-logon.ps1` downloads `setup.ps1` instead of carrying it inside the XML. The reason: **the
+ISO freezes the installer of the commit it was built from**, and a two-week-old ISO installs a
+two-week-old system. That nearly cost dearly here — the ISO from 05/09/2026 carries the version that
+wiped the whole disk without preserving the data partition, and it would keep doing that forever.
+Fetching on the spot lets the ISO age without rotting.
 
-O que é baixado passa por uma checagem antes de rodar (`protege_particao`): tem de ser um script
-bash e tem de conter `KEEP_LABELS` e `particoes_protegidas`. **Um instalador que não sabe preservar
-partição por rótulo não roda** — nem baixado, nem embutido. Sem rede e com uma ISO antiga, o menu
-recusa e explica, em vez de apagar o disco:
+What gets downloaded goes through a check before running (`protege_particao`): it has to be a bash
+script and it has to contain `KEEP_LABELS` and `particoes_protegidas`. **An installer that does not
+know how to preserve a partition by label does not run** — neither downloaded nor embedded. With no
+network and an old ISO, the menu refuses and explains, instead of erasing the disk:
 
 ```
 PAREI. O instalador embutido nesta ISO (abc1234 de 05/09/2026) NAO sabe preservar particao
 por rotulo: ele apagaria o disco inteiro, incluindo a particao de dados.
 ```
 
-A mesma checagem barra uma página de portal de wi-fi cativo e um download que veio pela metade —
-os dois casos em que "baixar da internet e executar" costuma dar errado.
+The same check blocks a captive Wi-Fi portal page and a download that arrived half-finished — the two
+cases where "download from the internet and execute" usually goes wrong.
 
-## ISO própria
+## Custom ISO
 
-A pasta `archiso/` é um perfil do [archiso](https://gitlab.archlinux.org/archlinux/archiso)
-(cópia do `releng`, o mesmo que gera a ISO oficial) com o que muda pra esta máquina:
+The `archiso/` folder is an [archiso](https://gitlab.archlinux.org/archlinux/archiso) profile (a copy
+of `releng`, the same one that produces the official ISO) with what changes for this machine:
 
-- teclado `br-abnt2`, `pt_BR.UTF-8` e fuso `America/Sao_Paulo` já no live, sem `loadkeys`;
-- `install.sh` e este README embutidos em `/root/myarch/`, então não precisa montar o Ventoy
-  nem ter internet pra achar o instalador;
-- menu no tty1 depois do autologin (`myarch-menu`): `1` instala automático (ver [Modo
-  automático](#modo-automático)), `2` instala perguntando, `3` usa a cópia embutida sem baixar,
-  `4` rebaixa os dotfiles, `5` só reaplica a config, `6` abre o submenu de recuperação (ver
-  [Consertar sem formatar](#consertar-sem-formatar)), shell, reiniciar, desligar. Com `script=`
-  na linha de boot o menu não aparece, igual ao releng;
-- lista de pacotes enxuta (`archiso/packages.x86_64`, 40 pacotes): kernel, firmware, boot, rede
-  (cabo e Wi-Fi), o que o `install.sh` chama e socorro básico (`ntfs-3g`, `exfatprogs`, `rsync`,
-  `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Fora: Wi-Fi, PXE, clonezilla,
-  VPN, modem, leitor de tela, guest tools de VirtualBox/VMware/Hyper-V, cloud-init, smartcard.
+- `br-abnt2` keyboard, `pt_BR.UTF-8` and the `America/Sao_Paulo` timezone already in the live system,
+  no `loadkeys` needed;
+- `install.sh` and this README embedded in `/root/myarch/`, so there is no need to mount Ventoy or to
+  have internet to find the installer;
+- a menu on tty1 after autologin (`myarch-menu`): `1` installs automatically (see [Automatic
+  mode](#automatic-mode)), `2` installs asking questions, `3` uses the embedded copy without
+  downloading, `4` re-pulls the dotfiles, `5` only reapplies the config, `6` opens the recovery
+  submenu (see [Fixing without formatting](#fixing-without-formatting)), shell, reboot, power off.
+  With `script=` on the boot line the menu does not appear, same as releng;
+- a trimmed package list (`archiso/packages.x86_64`, 40 packages): kernel, firmware, boot, network
+  (wired and Wi-Fi), what `install.sh` calls and basic rescue tooling (`ntfs-3g`, `exfatprogs`,
+  `rsync`, `7zip`, `tmux`, `htop`, `nvme-cli`, `smartmontools`, `openssh`). Left out: Wi-Fi, PXE,
+  clonezilla, VPN, modem, screen reader, VirtualBox/VMware/Hyper-V guest tools, cloud-init, smartcard.
 
-Gerar exige Arch com root e o pacote `archiso`; o jeito sem máquina Linux é o workflow
-**build-iso** (Actions → build-iso → Run workflow), que roda num container `archlinux`,
-leva uns 15 minutos e publica `myarch-<data>-x86_64.iso` mais o `.sha256` numa release
-`iso-<data>`. Localmente:
+Building it requires Arch with root and the `archiso` package; the way without a Linux machine is the
+**build-iso** workflow (Actions → build-iso → Run workflow), which runs in an `archlinux` container,
+takes about 15 minutes and publishes `myarch-<date>-x86_64.iso` plus the `.sha256` in an `iso-<date>`
+release. Locally:
 
 ```bash
 sudo pacman -S archiso
-sudo ./archiso/build.sh        # ISO em archiso/out/
+sudo ./archiso/build.sh        # ISO in archiso/out/
 ```
 
-O `build.sh` copia o `install.sh` da raiz pra dentro do perfil na hora do build (a cópia está
-no `.gitignore`) e grava um `VERSAO` com o commit e a data — é ele que o menu mostra ao avisar que
-está usando a cópia embutida. Essa cópia é só o plano B: com rede, o menu baixa a versão mais nova
-(veja [O instalador vem do GitHub](#o-instalador-vem-do-github-não-da-iso)). Os symlinks
-do `airootfs` estão no git como symlink de verdade: não edite essa pasta pelo Windows sem
-`core.symlinks=true`, senão eles viram arquivo de texto e o live quebra em silêncio.
+`build.sh` copies `install.sh` from the repo root into the profile at build time (the copy is in
+`.gitignore`) and writes a `VERSAO` with the commit and the date — that is what the menu shows when
+warning that it is using the embedded copy. That copy is only plan B: with a network, the menu
+downloads the newest version (see [The installer comes from
+GitHub](#the-installer-comes-from-github-not-from-the-iso)). The `airootfs` symlinks are stored in git
+as real symlinks: do not edit that folder from Windows without `core.symlinks=true`, or they turn into
+text files and the live system breaks silently.
 
-### Refazer a ISO: `atualizar-iso.ps1`
+### Rebuilding the ISO: `atualizar-iso.ps1`
 
-Do Windows, uma linha faz tudo — dispara o build, espera, baixa, **confere o `sha256`**, copia pro
-pendrive, aponta o `menu_alias` do `ventoy.json` pra ISO nova, remove a antiga e atualiza o
-`install.sh` solto do pendrive:
+From Windows, one line does everything — it triggers the build, waits, downloads, **checks the
+`sha256`**, copies it to the USB stick, points the `menu_alias` in `ventoy.json` at the new ISO,
+removes the old one and updates the loose `install.sh` on the stick:
 
 ```powershell
 .\atualizar-iso.ps1 -Pendrive E:
 ```
 
-| Forma | O que faz |
+| Form | What it does |
 |:--|:--|
-| `.\atualizar-iso.ps1` | dispara o build, espera, baixa e confere. Não toca no pendrive |
-| `.\atualizar-iso.ps1 -Pendrive E:` | o acima, e instala no pendrive |
-| `.\atualizar-iso.ps1 -SemBuild -Pendrive E:` | não dispara nada: pega a última release já publicada |
-| `-Token ghp_...` | token explícito; sem ele usa `$env:GH_TOKEN` ou o `gh auth token` |
+| `.\atualizar-iso.ps1` | triggers the build, waits, downloads and checks. Does not touch the USB stick |
+| `.\atualizar-iso.ps1 -Pendrive E:` | the above, and installs onto the USB stick |
+| `.\atualizar-iso.ps1 -SemBuild -Pendrive E:` | triggers nothing: takes the latest already published release |
+| `-Token ghp_...` | explicit token; without it, it uses `$env:GH_TOKEN` or `gh auth token` |
 
-Detalhes que o script cuida, e que são fáceis de esquecer fazendo à mão:
+Details the script takes care of, and that are easy to forget when doing it by hand:
 
-- **Se já houver um build rodando, ele acompanha aquele** em vez de empilhar outro — o workflow tem
-  `concurrency` sem `cancel-in-progress`, então disparar duas vezes só cria fila.
-- **Confere o `sha256` antes de gravar** e aborta se não bater.
-- **Só apaga a ISO antiga depois que a nova está no lugar.** Enquanto a antiga estiver no pendrive
-  ela é uma opção a mais no menu do Ventoy — e uma ISO velha carrega um `myarch-menu` velho, que
-  roda o instalador embutido dela em vez de baixar o novo.
-- **Preserva o resto do `ventoy.json`**, incluindo as entradas das outras ISOs e o tema; troca só o
-  `menu_alias` da nossa, mantendo o texto que já estava lá. Mesma regra do `pendrive.ps1` do
-  MyWinISO, porque o `ventoy.json` é do pendrive, não deste repositório.
-- **Grava o `install.sh` do pendrive com LF**, que é o que o bash lê.
-- O token só fala com a API; o download é sem ele (o repositório é público, e mandar o cabeçalho de
-  autorização no redirecionamento para o armazenamento de objetos faz ele recusar).
+- **If a build is already running, it follows that one** instead of stacking another — the workflow
+  has `concurrency` without `cancel-in-progress`, so triggering twice only creates a queue.
+- **It checks the `sha256` before writing** and aborts if it does not match.
+- **It only deletes the old ISO after the new one is in place.** While the old one is on the stick it
+  is one more option in the Ventoy menu — and an old ISO carries an old `myarch-menu`, which runs its
+  own embedded installer instead of downloading the new one.
+- **It preserves the rest of `ventoy.json`**, including the entries for the other ISOs and the theme;
+  it only changes the `menu_alias` of ours, keeping the text that was already there. The same rule as
+  MyWinISO's `pendrive.ps1`, because `ventoy.json` belongs to the USB stick, not to this repository.
+- **It writes the USB stick's `install.sh` with LF**, which is what bash reads.
+- The token only talks to the API; the download goes without it (the repository is public, and sending
+  the authorization header along the redirect to object storage makes it refuse).
 
-### Quando vale refazer
+### When rebuilding is worth it
 
-Desde que o menu passou a baixar o `install.sh` do GitHub na hora, refazer a ISO virou raro — ela é
-veículo de boot, e o que decide o que acontece com o disco mora no repositório. Vale quando:
+Ever since the menu started downloading `install.sh` from GitHub on the spot, rebuilding the ISO has
+become rare — it is a boot vehicle, and what decides what happens to the disk lives in the repository.
+It is worth it when:
 
-- o `myarch-menu`, o perfil `archiso/` ou a lista de pacotes do live mudaram;
-- o live está velho a ponto de o kernel não enxergar hardware novo;
-- você quer instalar **sem rede** — aí a cópia embutida é a única que existe.
+- `myarch-menu`, the `archiso/` profile or the live package list changed;
+- the live system is old enough that its kernel cannot see new hardware;
+- you want to install **without a network** — then the embedded copy is the only one there is.
 
-Grava do mesmo jeito: copiar o `.iso` pro pendrive do Ventoy.
+You write it the same way: copy the `.iso` onto the Ventoy stick.
 
-Pra testar antes de gravar, `archiso/test-qemu.ps1` sobe a ISO num QEMU do Windows (TCG, sem
-Hyper-V) com um disco virtio de 30 GB e um disco pequeno rotulado `Ventoy` fazendo o papel do
-pendrive com `myarch/myarch.conf`; monitor em `127.0.0.1:4445` pra mandar teclas e capturar a
-tela. Foi assim que o modo automático foi validado de ponta a ponta antes de formatar.
+To test before writing, `archiso/test-qemu.ps1` boots the ISO in a Windows QEMU (TCG, no Hyper-V) with
+a 30 GB virtio disk and a small disk labelled `Ventoy` playing the part of the USB stick with
+`myarch/myarch.conf`; the monitor is on `127.0.0.1:4445` for sending keys and capturing the screen.
+That is how automatic mode was validated end to end before formatting anything.
 
-## Repositórios relacionados
+## Related repositories
 
-- [eualexandrerrr/dotfiles](https://github.com/eualexandrerrr/dotfiles) — o rice que roda em cima desta base
+- [eualexandrerrr/dotfiles](https://github.com/eualexandrerrr/dotfiles) — the rice that runs on top of this base
 
 <div align="center">
-<sub>Branch <code>backup/legacy-2023</code> guarda o instalador antigo, de GRUB e i3.</sub>
+<sub>The <code>backup/legacy-2023</code> branch keeps the old installer, with GRUB and i3.</sub>
 </div>
