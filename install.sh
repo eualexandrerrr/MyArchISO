@@ -908,7 +908,9 @@ stage_firstboot() {
     #
     # runuser -P: sem o pty o /dev/tty1 fica de root, o usuario nao consegue abrir e o
     # menu de desktop do install.sh nao teria como perguntar nada -- e aqui e justamente
-    # onde nao da pra passar --de=.
+    # onde nao da pra passar --de=. E a saida vai direto no tty, nao pelo journal+console:
+    # o journal prefixa cada linha com timestamp e nome do servico, e ai qualquer menu ou
+    # barra de progresso vira sopa de letrinha na tela. O log continua no arquivo, pelo tee.
     [[ $AUTO == 1 ]] || return 0
     log "agendando o install.sh dos dotfiles pro primeiro boot"
 
@@ -950,8 +952,8 @@ ConditionPathExists=/usr/local/bin/myarch-firstboot
 Type=oneshot
 ExecStart=/usr/local/bin/myarch-firstboot
 StandardInput=tty-force
-StandardOutput=journal+console
-StandardError=journal+console
+StandardOutput=tty
+StandardError=tty
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
