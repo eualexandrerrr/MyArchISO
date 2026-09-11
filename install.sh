@@ -905,6 +905,10 @@ stage_firstboot() {
     # So no modo automatico: no primeiro boot, antes de qualquer login, roda o
     # install.sh dos dotfiles no tty1 (KDE, NVIDIA se houver, pacotes, AUR) e
     # reinicia. Se falhar, se desliga e deixa o log; a maquina continua usavel.
+    #
+    # runuser -P: sem o pty o /dev/tty1 fica de root, o usuario nao consegue abrir e o
+    # menu de desktop do install.sh nao teria como perguntar nada -- e aqui e justamente
+    # onde nao da pra passar --de=.
     [[ $AUTO == 1 ]] || return 0
     log "agendando o install.sh dos dotfiles pro primeiro boot"
 
@@ -920,7 +924,7 @@ if ! ping -c1 -W2 archlinux.org >/dev/null 2>&1; then
     printf 'sem rede depois de 2 minutos; rode depois: cd ~/.dotfiles && ./install.sh\n'
     systemctl disable myarch-firstboot.service; exit 1
 fi
-if runuser -u "\$USERNAME" -- env HOME="/home/\$USERNAME" bash -lc 'cd ~/.dotfiles && { git pull -q --ff-only || true; } && bash ./install.sh'; then
+if runuser -P -u "\$USERNAME" -- env HOME="/home/\$USERNAME" bash -lc 'cd ~/.dotfiles && { git pull -q --ff-only || true; } && bash ./install.sh'; then
     printf '\n\033[1;32m==>\033[0m dotfiles instalados. Reiniciando em 5 s.\n'
     rm -f "/home/\$USERNAME/PROXIMOS-PASSOS.txt"
     systemctl disable myarch-firstboot.service
